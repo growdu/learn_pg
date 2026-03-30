@@ -9,8 +9,9 @@ import PipelineView from './components/pipeline/PipelineView'
 import BufferHeatmapView from './components/buffer/BufferHeatmapView'
 import LockGraphView from './components/lock/LockGraphView'
 import MemoryStructView from './components/memory/MemoryStructView'
+import PlanTreeView from './components/pipeline/PlanTreeView'
 
-type View = 'home' | 'write' | 'read' | 'transaction' | 'wal' | 'clog' | 'buffer' | 'lock' | 'memory'
+type View = 'home' | 'write' | 'read' | 'transaction' | 'wal' | 'clog' | 'buffer' | 'lock' | 'memory' | 'plan'
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('home')
@@ -35,6 +36,8 @@ function App() {
         return <LockGraphView />
       case 'memory':
         return <MemoryStructView />
+      case 'plan':
+        return <PlanTreeView />
       default:
         return (
           <div style={{ padding: '2rem' }}>
