@@ -1,0 +1,21 @@
+FROM rust:1.75-alpine
+
+RUN apk add --no-cache clang llvm lld elfutils-dev libelf-dev openssl-dev
+
+WORKDIR /app
+
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs && \
+    cargo build --release 2>/dev/null || true && \
+    rm -rf src
+
+COPY . .
+RUN cargo build --release
+
+FROM alpine:3.19
+RUN apk add --no-cache libelf
+
+WORKDIR /app
+COPY --from=0 /app/target/release/pg-collector /app/collector
+
+CMD ["/app/collector"]
