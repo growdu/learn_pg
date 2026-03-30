@@ -4,53 +4,45 @@
 
 ## 2026-03-30
 
-### 完成
+### 已完成任务
 
-- [x] 创建 `design.md` — 概要设计
-  - 系统架构：前端(React+D3) + WebSocket + Go后端 + Rust eBPF
-  - 6大功能模块设计
-  - 技术选型确定
+| 提交 | 任务 | 内容 |
+|------|------|------|
+| fc8c3c8 | 1.1,1.2 | 项目骨架 + 设计文档（README.md, design.md, need.md, task_plan.md, findings.md, progress.md） |
+| 9a93fd1 | 1.3 | docker-compose.dev.yml + Dockerfiles (backend/collector/frontend dev) |
+| fb722d6 | 1.4 | .env.example 环境变量模板 |
+| d028d62 | 2.2 | config.go 配置加载模块 |
+| 16a7146 | 2.3-2.9 | ws/hub.go, pg/client.go, api/handler.go, cmd/server/main.go |
+| 8008200 | 2.10-2.11 | pkg/wal/reader.go, parser.go, pkg/clog/reader.go |
+| 30f5c8f | P0全部 | 生产 Dockerfile + docker-compose.yml |
 
-- [x] 创建 `README.md` — 详细设计
-  - 完整技术栈选型
-  - 模块详细设计（WAL/CLOG/事务/Pipeline）
-  - 数据模型与 API
-  - 云原生部署设计（Docker Compose + K8s）
-  - P0~P5 实施计划
-
-- [x] 创建 `task_plan.md` — 任务规划
-  - 6个阶段，30+ 个任务
-  - 决策记录
-
-- [x] 创建 `findings.md` — 研究发现
-  - PG 18 探针方案对比
-  - WAL/CLOG 文件格式
-  - 架构决策记录
-  - 待验证假设清单
-
-- [x] 更新 PG 版本为 postgres:18（所有位置）
+**累计 7 次提交，已推送至 GitHub (growdu/learn_pg)**
 
 ### 进行中
 
-- [ ] 阶段一：项目初始化
-  - [ ] 1.1 创建项目目录结构
-  - [ ] 1.2 Git 初始化
-  - [ ] 1.3 Docker Compose 开发环境
-  - [ ] 1.4 .env.example
+- [ ] 阶段三：React 前端
+  - [ ] 3.1 React + Vite + TypeScript 项目初始化
+  - [ ] 3.2 基础布局组件（Header, Sidebar, StatusBar）
+  - [ ] 3.3 SQLConsole 组件
+  - [ ] 3.4 WALViewer 组件
+  - [ ] 3.5 CLOGViewer 组件
+  - [ ] 3.6 WebSocket 客户端 hook
+  - [ ] 3.7 Zustand 状态管理
 
 ### 下一步
 
-**阶段一任务执行顺序：**
-1. 创建完整目录结构（符合 README.md 第9节）
-2. Git init + .gitignore + 初始提交
-3. 配置 docker-compose.dev.yml
-4. 验证 postgres:18 可启动
+**阶段三执行顺序：**
+1. React + Vite + TypeScript 项目初始化（package.json, vite.config.ts）
+2. 基础布局组件
+3. SQLConsole 组件
+4. WebSocket hook
+5. WALViewer / CLOGViewer
 
 ### 备注
 
+- 阶段一（项目初始化）和阶段二（Go后端P0）已完成
 - 功能单元划分：Go后端6模块、React前端8模块、eBPF采集器4模块
 - 每个任务完成后自动提交 GitHub
-- GitHub 仓库待初始化
 
 ---
 
