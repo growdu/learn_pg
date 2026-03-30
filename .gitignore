@@ -1,0 +1,43 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+.DS_Store
+
+# Frontend
+src/**/*.css
+
+# Backend
+backend/tmp/
+backend/bin/
+
+# Collector
+collector/target/
+
+# Tauri
+src-tauri/target/
+src-tauri/cargo-tauri/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Test
+coverage/
+
+# Misc
+*.log
