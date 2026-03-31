@@ -327,3 +327,91 @@ pub fn all_probe_status() -> Vec<ProbeStatus> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rmgr_id_name() {
+        assert_eq!(RmgrId::XLOG.name(), "XLOG");
+        assert_eq!(RmgrId::Heap.name(), "Heap");
+        assert_eq!(RmgrId::Btree.name(), "Btree");
+    }
+
+    #[test]
+    fn test_rmgr_id_from_u8() {
+        assert_eq!(RmgrId::from(0u8), RmgrId::XLOG);
+        assert_eq!(RmgrId::from(4u8), RmgrId::Btree);
+        assert_eq!(RmgrId::from(99u8), RmgrId::MaxRmgrId);
+    }
+
+    #[test]
+    fn test_xact_state_as_str() {
+        assert_eq!(XactState::Begin.as_str(), "begin");
+        assert_eq!(XactState::Commit.as_str(), "commit");
+        assert_eq!(XactState::Abort.as_str(), "abort");
+    }
+
+    #[test]
+    fn test_lock_mode_name() {
+        assert_eq!(LockMode::NoLock.name(), "NoLock");
+        assert_eq!(LockMode::ForShare.name(), "ForShare");
+        assert_eq!(LockMode::Exclusive.name(), "Exclusive");
+    }
+
+    #[test]
+    fn test_wal_insert_event() {
+        let event = WalInsertEvent {
+            xlog_ptr: "0/16D4F30".to_string(),
+            record_len: 128,
+            rmgr_id: 2,
+            rmgr_name: "Heap".to_string(),
+            info: 0,
+            xid: 100,
+            block_num: Some(42),
+            rel_oid: Some(16384),
+        };
+
+        assert_eq!(event.rmgr_id, 2);
+        assert_eq!(event.record_len, 128);
+        assert_eq!(event.block_num, Some(42));
+    }
+
+    #[test]
+    fn test_buffer_pin_event() {
+        let event = BufferPinEvent {
+            buffer_id: 42,
+            is_hit: true,
+            relfilenode: 16384,
+            fork_num: 0,
+            block_num: 0,
+            lock_mode: LockMode::ForShare,
+        };
+
+        assert_eq!(event.buffer_id, 42);
+        assert!(event.is_hit);
+    }
+
+    #[test]
+    fn test_xact_state_event() {
+        let event = XactStateEvent {
+            xid: 100,
+            vxid: "3/100".to_string(),
+            state: "commit".to_string(),
+            lsn: Some("0/16D500".to_string()),
+            top_xid: None,
+        };
+
+        assert_eq!(event.xid, 100);
+        assert_eq!(event.state, "commit");
+    }
+
+    #[test]
+    fn test_all_probe_status() {
+        let statuses = all_probe_status();
+        assert_eq!(statuses.len(), 9); // 9 probe targets defined
+        assert_eq!(statuses[0].name, "xlog_insert");
+        assert!(!statuses[0].enabled);
+    }
+}
