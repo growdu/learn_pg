@@ -40,4 +40,4 @@ pnpm-debug.log*
 coverage/
 
 # Misc
-*.log
+*.log.obsidian/
