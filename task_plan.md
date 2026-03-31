@@ -68,7 +68,7 @@
 |------|------|------|------|
 | 6.1 | Docker Compose 完整联调 | pending | postgres + backend + frontend + collector |
 | 6.2 | GitHub Actions CI 流水线 | completed | Docker Buildx 多架构构建 |
-| 6.3 | 按功能单元自动提交（每完成一个任务即提交） | completed | 已完成 11 次提交 |
+| 6.3 | 按功能单元自动提交（每完成一个任务即提交） | completed | 已完成 14 次提交 |
 | 6.4 | GitHub 仓库初始化并推送 | completed | growdu/learn_pg 已推送 |
 
 ---
@@ -84,7 +84,7 @@
 
 ---
 
-## 累计提交（11次）
+## 累计提交（14次）
 
 | 提交 | 内容 |
 |------|------|
@@ -98,7 +98,9 @@
 | 97b226a | React 前端（布局、SQLConsole、WALViewer、CLOGViewer等） |
 | 45a8d1d | Rust eBPF采集器（WS客户端 + 日志解析降级） |
 | e1d0202 | D3.js可视化（PipelineView, BufferHeatmap, LockGraph, PlanTree） |
-| 861e268 | progress.md 更新 |
+| 9001a4c | task_plan.md 更新 |
+| 052984b | eBPF探针定义 + TransactionStateView |
+| 957f5ec | GitHub Actions CI 流水线 |
 
 ---
 
