@@ -2,7 +2,7 @@
 
 ---
 
-## 2026-03-30
+## 2026-03-31
 
 ### 已完成任务
 
@@ -16,34 +16,32 @@
 | 8008200 | 2.10-2.11 | pkg/wal/reader.go, parser.go, pkg/clog/reader.go |
 | 30f5c8f | P0全部 | 生产 Dockerfile + docker-compose.yml |
 | 97b226a | 3.1-3.7 | React前端（布局、SQLConsole、WALViewer、CLOGViewer等） |
-| 45a8d1d | 4.1-4.7 | Rust eBPF采集器（WS客户端、日志解析降级模式） |
+| 45a8d1d | 4.1,4.6,4.7 | Rust eBPF采集器（WS客户端 + 日志解析降级模式） |
+| e1d0202 | 5.1-5.4 | D3.js可视化（PipelineView, BufferHeatmapView, LockGraphView, PlanTreeView） |
+| 9001a4c | - | task_plan.md 更新 |
+| 7a3b9c2 | 4.2-4.5,5.5 | eBPF探针定义 + TransactionStateView |
 
-**累计 9 次提交，已推送至 GitHub (growdu/learn_pg)**
+**累计 13 次提交，已推送至 GitHub (growdu/learn_pg)**
 
 ### 进行中
 
-- [ ] 阶段五：eBPF 采集器 P1
-  - [ ] WAL Insert 探针
-  - [ ] Buffer Pin 探针
-  - [ ] 事务状态探针
-  - [ ] Lock 探针
-  - [ ] 实时事件上报
+- [ ] 阶段六：集成与提交
+  - [ ] 6.1 Docker Compose 完整联调
+  - [ ] 6.2 GitHub Actions CI 流水线
 
 ### 下一步
 
-**阶段五执行顺序：**
-1. 使用 Aya 框架实现 WAL Insert 探针
-2. 实现 Buffer Pin / Buffer Alloc 探针
-3. 实现事务状态探针（begin/commit/abort）
-4. 实现 Lock 探针
-5. 与后端 WebSocket 集成
+**阶段六执行顺序：**
+1. 完整 Docker Compose 联调（postgres + backend + frontend + collector）
+2. GitHub Actions CI 流水线（Docker Buildx 多架构构建）
 
 ### 备注
 
 - P0（项目初始化 + Go后端 + React前端）已全部完成
-- 阶段四（eBPF采集器）已实现基础框架，降级模式可用
+- 阶段五（Pipeline可视化）5/5 完成
+- 阶段四（eBPF采集器）探针框架已完成
 - 每个任务完成后自动提交 GitHub
 
 ---
 
-*最后更新：2026-03-30*
+*最后更新：2026-03-31*
