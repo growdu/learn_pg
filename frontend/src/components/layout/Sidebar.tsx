@@ -1,4 +1,4 @@
-type View = 'home' | 'write' | 'read' | 'transaction' | 'wal' | 'clog' | 'buffer' | 'lock' | 'memory' | 'plan'
+type View = 'home' | 'write' | 'read' | 'transaction' | 'xact_state' | 'wal' | 'clog' | 'buffer' | 'lock' | 'memory' | 'plan'
 
 interface SidebarProps {
   currentView: View
@@ -9,7 +9,8 @@ const navItems: { key: View; label: string; group: string }[] = [
   { key: 'home', label: '首页', group: '首页' },
   { key: 'write', label: '写入 Pipeline', group: 'Pipeline' },
   { key: 'read', label: '读取 Pipeline', group: 'Pipeline' },
-  { key: 'transaction', label: '事务状态', group: 'Pipeline' },
+  { key: 'transaction', label: '事务 Pipeline', group: 'Pipeline' },
+  { key: 'xact_state', label: '事务状态机', group: 'Pipeline' },
   { key: 'plan', label: '执行计划树', group: 'Pipeline' },
   { key: 'wal', label: 'WAL 查看器', group: '专题' },
   { key: 'clog', label: 'CLOG 查看器', group: '专题' },

@@ -10,8 +10,9 @@ import BufferHeatmapView from './components/buffer/BufferHeatmapView'
 import LockGraphView from './components/lock/LockGraphView'
 import MemoryStructView from './components/memory/MemoryStructView'
 import PlanTreeView from './components/pipeline/PlanTreeView'
+import TransactionStateView from './components/transaction/TransactionStateView'
 
-type View = 'home' | 'write' | 'read' | 'transaction' | 'wal' | 'clog' | 'buffer' | 'lock' | 'memory' | 'plan'
+type View = 'home' | 'write' | 'read' | 'transaction' | 'xact_state' | 'wal' | 'clog' | 'buffer' | 'lock' | 'memory' | 'plan'
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('home')
@@ -30,6 +31,8 @@ function App() {
         return <PipelineView type="read" />
       case 'transaction':
         return <PipelineView type="transaction" />
+      case 'xact_state':
+        return <TransactionStateView />
       case 'buffer':
         return <BufferHeatmapView />
       case 'lock':

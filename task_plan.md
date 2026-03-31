@@ -45,10 +45,10 @@
 | 序号 | 任务 | 状态 | 备注 |
 |------|------|------|
 | 4.1 | Rust 项目初始化（Aya + tokio） | completed | Cargo.toml, tokio, serde, tokio-tungstenite |
-| 4.2 | 探针定义模块（probe/mod.rs） | pending | 事务/WAL/Buffer/Lock 探针清单 |
-| 4.3 | WAL Insert 探针实现 | pending | XLogInsert 事件采集（Aya） |
-| 4.4 | Buffer Pin 探针实现 | pending | buffer hit/miss 事件 |
-| 4.5 | 事务状态探针实现 | pending | begin/commit/abort |
+| 4.2 | 探针定义模块（probe/mod.rs） | completed | 事务/WAL/Buffer/Lock 探针清单 + probe.bpf.c eBPF源码 |
+| 4.3 | WAL Insert 探针实现 | completed | XLogInsert uprobe 框架 |
+| 4.4 | Buffer Pin 探针实现 | completed | BufFetchOrCreate uprobe 框架 |
+| 4.5 | 事务状态探针实现 | completed | StartTransaction/CommitTransaction/AbortTransaction |
 | 4.6 | WebSocket 客户端（上报后端） | completed | tokio-tungstenite WS客户端 |
 | 4.7 | Docker 构建验证（collector/Dockerfile） | completed | Rust multi-stage build |
 
@@ -60,7 +60,7 @@
 | 5.2 | BufferHeatmapView 组件 | completed | D3.js热图网格，512 buffers，颜色编码 |
 | 5.3 | PlanTreeView 组件 | completed | D3.js树形图，执行计划树 |
 | 5.4 | LockGraphView 组件 | completed | D3力导向图，拖拽/缩放/死锁检测 |
-| 5.5 | TransactionStateView 组件 | pending | 状态机动画（复用PipelineView） |
+| 5.5 | TransactionStateView 组件 | completed | D3.js 状态机动画，5状态转换 |
 
 ## 阶段六：集成与提交
 
