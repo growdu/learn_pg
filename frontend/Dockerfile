@@ -1,20 +1,31 @@
-FROM node:20-alpine
+# Build stage
+FROM node:20-alpine AS builder
 
-RUN corepack enable && corepack add pnpm@9
+# Use Chinese npm mirror
+RUN npm config set registry https://registry.npmmirror.com
 
 WORKDIR /app
 
-COPY package.json pnpm-lock.yaml* ./
-RUN pnpm install --frozen-lockfile || pnpm install
+# Copy package files first for better caching
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
-COPY . .
-RUN pnpm build
+# Copy source code
+COPY frontend/ .
 
+# Build
+RUN npm run build
+
+# Production stage
 FROM nginx:alpine
+
+# Use Chinese nginx mirror
 RUN apk add --no-cache nginx
 
-COPY --from=0 /app/dist /usr/share/nginx/html
+# Copy built assets
+COPY --from=builder /app/dist /usr/share/nginx/html
 
+# Nginx configuration
 RUN echo 'server { \
     listen 80; \
     root /usr/share/nginx/html; \
@@ -25,6 +36,16 @@ RUN echo 'server { \
     location /api/ { \
         proxy_pass http://backend:3000/; \
         proxy_set_header Host $host; \
+        proxy_set_header X-Real-IP $remote_addr; \
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; \
+    } \
+    location /ws { \
+        proxy_pass http://backend:8080/; \
+        proxy_http_version 1.1; \
+        proxy_set_header Upgrade $http_upgrade; \
+        proxy_set_header Connection "upgrade"; \
+        proxy_set_header Host $host; \
+        proxy_read_timeout 86400; \
     } \
 }' > /etc/nginx/conf.d/default.conf
 
