@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+
 	"pg-visualizer-backend/internal/config"
 	"pg-visualizer-backend/internal/pg"
 	"pg-visualizer-backend/internal/ws"
@@ -70,11 +72,13 @@ type ConnectResponse struct {
 
 // ServeConnect handles POST /api/connect
 func (h *Handler) ServeConnect(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[API] ServeConnect called")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	log.Printf("[API] Reading body")
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read body", http.StatusBadRequest)
@@ -82,6 +86,7 @@ func (h *Handler) ServeConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
+	log.Printf("[API] Body: %s", string(body))
 	var req ConnectRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -123,10 +128,13 @@ func (h *Handler) ServeConnect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.pgClient = client
+	log.Printf("[API] PG client set, getting version")
 
 	version, _ := client.GetVersion()
+	log.Printf("[API] Got version: %s", version)
 	dataDir, _ := client.GetPGDataDir()
 
+	log.Printf("[API] Sending response")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ConnectResponse{
 		Success: true,
@@ -134,6 +142,7 @@ func (h *Handler) ServeConnect(w http.ResponseWriter, r *http.Request) {
 		Version: version,
 		DataDir: dataDir,
 	})
+	log.Printf("[API] Response sent")
 }
 
 // ExecuteRequest represents SQL execution request
