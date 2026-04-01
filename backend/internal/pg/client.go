@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"strconv"
 	"strings"
@@ -21,11 +22,14 @@ type Client struct {
 
 // Connect establishes connection to PostgreSQL
 func (c *Client) Connect(host string, port int, user, password, database string) error {
+	log.Printf("[PG] Connect: host=%s port=%d user=%s database=%s", host, port, user, database)
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
 	if err != nil {
 		return fmt.Errorf("failed to connect to PostgreSQL at %s: %w", addr, err)
 	}
+	// Set initial read deadline for connection handshake
+	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	c.conn = conn
 	c.reader = bufio.NewReader(conn)
 
@@ -54,6 +58,10 @@ func (c *Client) sendStartupMessage(user, database string) error {
 	c.writeCString(&buf, "user", user)
 	c.writeCString(&buf, "database", database)
 	c.writeCString(&buf, "application_name", "pg-visualizer")
+	// 强制使用 text format
+	c.writeCString(&buf, "client_encoding", "UTF8")
+	// 尝试禁用 binary 模式
+	c.writeCString(&buf, "extra_float_digits", "3")
 	buf.WriteByte(0)
 
 	length := int32(buf.Len() + 4)
@@ -132,6 +140,7 @@ func (c *Client) sendPassword(password string) error {
 // waitReadyForQuery consumes messages until ReadyForQuery
 func (c *Client) waitReadyForQuery() error {
 	for {
+		c.conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 		msgType, err := c.reader.ReadByte()
 		if err != nil {
 			return err
@@ -165,6 +174,7 @@ func (c *Client) waitReadyForQuery() error {
 
 // Execute runs a SQL query and returns result
 func (c *Client) Execute(sql string) (*ExecuteResult, error) {
+	log.Printf("[PG] Execute: sending query")
 	if err := c.sendQuery(sql); err != nil {
 		return nil, err
 	}
@@ -172,10 +182,14 @@ func (c *Client) Execute(sql string) (*ExecuteResult, error) {
 	result := &ExecuteResult{Rows: []map[string]string{}}
 
 	for {
+		// Use ReadByte with timeout to avoid deadlock
+		c.conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 		msgType, err := c.reader.ReadByte()
 		if err != nil {
+			log.Printf("[PG] Execute: readByte error: %v", err)
 			return nil, err
 		}
+		log.Printf("[PG] Execute: got msgType=%d (%c)", msgType, msgType)
 		length, err := readInt32(c.reader)
 		if err != nil {
 			return nil, err
@@ -186,17 +200,32 @@ func (c *Client) Execute(sql string) (*ExecuteResult, error) {
 			cmdTag, _ := c.readCString()
 			result.CommandTag = cmdTag
 		case 'T': // RowDescription
+			log.Printf("[PG] Execute: RowDescription")
 			cols, err := c.readRowDescription()
 			if err != nil {
+				log.Printf("[PG] Execute: readRowDescription error: %v", err)
 				return nil, err
 			}
 			result.Columns = cols
-		case 'D': // DataRow
+			log.Printf("[PG] Execute: cols=%v", cols)
+		case 'D': // DataRow (text format)
+			log.Printf("[PG] Execute: DataRow (text)")
 			row, err := c.readDataRow(result.Columns)
 			if err != nil {
+				log.Printf("[PG] Execute: readDataRow error: %v", err)
 				return nil, err
 			}
 			result.Rows = append(result.Rows, row)
+			log.Printf("[PG] Execute: row=%v", row)
+		case 255: // BinaryRow
+			log.Printf("[PG] Execute: BinaryRow (format=1)")
+			row, err := c.readDataRow(result.Columns)
+			if err != nil {
+				log.Printf("[PG] Execute: readBinaryRow error: %v", err)
+				return nil, err
+			}
+			result.Rows = append(result.Rows, row)
+			log.Printf("[PG] Execute: binary row=%v", row)
 		case 'Z': // ReadyForQuery
 			return result, nil
 		case 'E': // ErrorResponse
@@ -218,7 +247,9 @@ func (c *Client) sendQuery(sql string) error {
 	var buf bytes.Buffer
 	buf.WriteByte('Q')
 	payload := sql + "\x00"
-	binary.Write(&buf, binary.BigEndian, int32(len(payload)+4))
+	payloadLen := len(payload)
+	log.Printf("[PG] sendQuery: sql=%q payloadLen=%d", sql, payloadLen)
+	binary.Write(&buf, binary.BigEndian, int32(payloadLen))
 	buf.WriteString(payload)
 	_, err := c.conn.Write(buf.Bytes())
 	return err
@@ -229,18 +260,23 @@ func (c *Client) readRowDescription() ([]Column, error) {
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("[PG] readRowDescription: fieldCount=%d", fieldCount)
 
 	cols := make([]Column, fieldCount)
 	for i := range cols {
-		name, _ := c.readCStringBytes()
+		// PostgreSQL RowDescription: field name is null-terminated
+		nameBytes, _ := c.readCStringBytes()
+		log.Printf("[PG] readRowDescription: col[%d] raw name bytes: %v", i, nameBytes)
 		c.reader.Discard(4) // table OID
 		c.reader.Discard(2) // column index
 		dataTypeOID, _ := readInt32(c.reader)
 		c.reader.Discard(2) // type size
-		c.reader.Discard(2) // format code
+		formatCode, _ := readInt16(c.reader)
+		log.Printf("[PG] readRowDescription: col[%d] dataTypeOID=%d formatCode=%d", i, dataTypeOID, formatCode)
 
-		cols[i] = Column{Name: string(name), Type: uint32(dataTypeOID)}
+		cols[i] = Column{Name: string(nameBytes), Type: uint32(dataTypeOID), Format: formatCode}
 	}
+	log.Printf("[PG] readRowDescription: final cols=%v", cols)
 	return cols, nil
 }
 
@@ -260,7 +296,27 @@ func (c *Client) readDataRow(cols []Column) (map[string]string, error) {
 		if colLen != -1 {
 			data := make([]byte, colLen)
 			io.ReadFull(c.reader, data)
-			value = string(data)
+
+			// 检查列格式
+			format := int16(0)
+			if i < len(cols) {
+				format = cols[i].Format
+			}
+			log.Printf("[PG] readDataRow: col[%d] colLen=%d format=%d data=%v", i, colLen, format, data)
+
+			if format == 1 {
+				// Binary format - 需要根据 dataTypeOID 解码
+				// int4 (OID=23): 4-byte big-endian
+				if i < len(cols) && cols[i].Type == 23 && colLen == 4 {
+					val := int32(data[0])<<24 | int32(data[1])<<16 | int32(data[2])<<8 | int32(data[3])
+					value = strconv.Itoa(int(val))
+				} else {
+					value = string(data)
+				}
+			} else {
+				// Text format
+				value = string(data)
+			}
 		}
 		if i < len(cols) {
 			row[cols[i].Name] = value
@@ -304,6 +360,7 @@ func (c *Client) readCStringBytes() ([]byte, error) {
 		}
 		buf.WriteByte(b)
 	}
+	log.Printf("[PG] readCStringBytes: got %q (len=%d)", buf.String(), buf.Len())
 	return buf.Bytes(), nil
 }
 
@@ -377,8 +434,9 @@ type ExecuteResult struct {
 
 // Column describes a result column
 type Column struct {
-	Name string
-	Type uint32
+	Name   string
+	Type   uint32
+	Format int16 // 0 = text, 1 = binary
 }
 
 // GetSQLResult returns a human-readable string

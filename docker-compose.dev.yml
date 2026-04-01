@@ -10,6 +10,10 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
       POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql
     command:
       - "postgres"
       - "-cshared_buffers=256MB"
@@ -17,10 +21,6 @@ services:
       - "-clog_min_messages=log"
       - "-cwal_level=logical"
       - "-cmax_wal_senders=10"
-    ports:
-      - "5432:5432"
-    volumes:
-      - pg_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -34,22 +34,23 @@ services:
       dockerfile: Dockerfile.dev
     container_name: pgv-backend
     environment:
+      # Backend 连接 Postgres 使用 Docker 内部网络 (容器间通信)
       PG_HOST: postgres
       PG_PORT: 5432
       PG_USER: postgres
       PG_PASSWORD: postgres
       PG_DATABASE: postgres
-      API_PORT: 3000
-      WS_PORT: 8080
+      API_PORT: 3001
+      WS_PORT: 8099
       COLLECTOR_WS_URL: ws://collector:8090
     ports:
-      - "3000:3000"
-      - "8080:8080"
+      - "3001:3001"
+      - "8099:8080"
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -74,7 +75,7 @@ services:
       - seccomp=unconfined
     volumes:
       - /lib/modules:/lib/modules:ro
-      - pg_data:/var/lib/postgresql/data
+      - pg_data:/var/lib/postgresql
     depends_on:
       - postgres
     profiles:
@@ -86,10 +87,11 @@ services:
       context: ./frontend
       dockerfile: Dockerfile.dev
     container_name: pgv-frontend
+    environment:
+      VITE_API_URL: http://pgv-backend:3001
+      VITE_WS_URL: ws://pgv-backend:8080
     ports:
       - "5173:5173"
-    volumes:
-      - ./frontend:/app
     depends_on:
       - backend
     command: ["pnpm", "dev", "--host"]

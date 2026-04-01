@@ -7,11 +7,26 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"pg-visualizer-backend/internal/api"
 	"pg-visualizer-backend/internal/config"
 	"pg-visualizer-backend/internal/ws"
 )
+
+// CORS middleware
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -35,12 +50,21 @@ func main() {
 	mux := http.NewServeMux()
 	api.SetupRoutes(handler, mux)
 
+	// Wrap mux with CORS middleware
+	corsHandler := corsMiddleware(mux)
+
 	// Start combined HTTP+WS server
 	addr := fmt.Sprintf(":%d", cfg.APIPort)
 	log.Printf("[MAIN] Backend ready. API+WS=http://localhost:%d", cfg.APIPort)
 
 	go func() {
-		if err := http.ListenAndServe(addr, mux); err != nil {
+		server := &http.Server{
+			Addr:         addr,
+			Handler:      corsHandler,
+			ReadTimeout:  30 * time.Second,
+			WriteTimeout: 30 * time.Second,
+		}
+		if err := server.ListenAndServe(); err != nil {
 			log.Fatalf("[MAIN] Server failed: %v", err)
 		}
 	}()

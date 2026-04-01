@@ -1,6 +1,8 @@
 FROM golang:1.21-alpine
 
-RUN go install github.com/air-verse/air@latest
+ENV GOPROXY=https://goproxy.cn,direct
+ENV GO111MODULE=on
+ENV GOSUMDB=off
 
 WORKDIR /app
 
@@ -11,4 +13,4 @@ COPY . .
 
 EXPOSE 3000 8080
 
-CMD ["air", "-c", ".air.toml"]
+CMD ["go", "run", "cmd/server/main.go"]
