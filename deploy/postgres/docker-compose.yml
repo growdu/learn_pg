@@ -1,0 +1,33 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: ${COMPOSE_PROJECT_NAME:-pgv}-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_HOST_AUTH_METHOD: ${POSTGRES_HOST_AUTH_METHOD:-trust}
+    command:
+      - "postgres"
+      - "-cshared_buffers=${POSTGRES_SHARED_BUFFERS:-256MB}"
+      - "-cmax_connections=${POSTGRES_MAX_CONNECTIONS:-100}"
+      - "-clog_min_messages=log"
+      - "-cwal_level=logical"
+      - "-cmax_wal_senders=10"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - ${COMPOSE_NETWORK:-pgv-net}
+
+volumes:
+  pg_data:
+
+networks:
+  pgv-net:
