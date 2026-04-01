@@ -1,0 +1,37 @@
+services:
+  backend:
+    build:
+      context: ${BACKEND_BUILD_CONTEXT:-../../backend}
+      dockerfile: ${BACKEND_DOCKERFILE:-Dockerfile}
+    container_name: ${COMPOSE_PROJECT_NAME:-pgv}-backend
+    environment:
+      PG_HOST: ${POSTGRES_HOST:-postgres}
+      PG_PORT: ${POSTGRES_PORT:-5432}
+      PG_USER: ${POSTGRES_USER:-postgres}
+      PG_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      PG_DATABASE: ${POSTGRES_DB:-postgres}
+      API_PORT: ${BACKEND_API_PORT:-3000}
+      WS_PORT: ${BACKEND_WS_PORT:-8080}
+      COLLECTOR_WS_URL: "ws://${COLLECTOR_HOST:-collector}:${COLLECTOR_PORT:-8090}"
+      PG_DATA_DIR: ${PG_DATA_DIR:-/var/lib/postgresql/data}
+      # External configuration
+      APP_ENV: ${APP_ENV:-development}
+      APP_EXTERNAL_HOST: ${APP_EXTERNAL_HOST:-localhost}
+    ports:
+      - "${BACKEND_API_PORT:-3000}:${BACKEND_API_PORT:-3000}"
+      - "${BACKEND_WS_PORT:-8080}:${BACKEND_WS_PORT:-8080}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${BACKEND_API_PORT:-3000}/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - ${COMPOSE_NETWORK:-pgv-net}
+
+networks:
+  ${COMPOSE_NETWORK:-pgv-net}:
+    name: ${COMPOSE_NETWORK:-pgv-net}
+    external: ${COMPOSE_NETWORK_EXTERNAL:-false}
