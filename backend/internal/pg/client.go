@@ -3,6 +3,7 @@ package pg
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -60,6 +61,24 @@ func (c *Client) Execute(sql string) (*ExecuteResult, error) {
 		return nil, fmt.Errorf("not connected")
 	}
 
+	normalized := strings.TrimSpace(strings.ToLower(sql))
+	if shouldUseQuery(normalized) {
+		return c.query(sql)
+	}
+
+	result, err := c.exec(sql)
+	if err == nil {
+		return result, nil
+	}
+
+	if strings.Contains(normalized, " returning ") {
+		return c.query(sql)
+	}
+
+	return nil, err
+}
+
+func (c *Client) query(sql string) (*ExecuteResult, error) {
 	rows, err := c.conn.Query(sql)
 	if err != nil {
 		return nil, err
@@ -78,9 +97,8 @@ func (c *Client) Execute(sql string) (*ExecuteResult, error) {
 	}
 
 	result := &ExecuteResult{
-		Columns:    make([]Column, len(columns)),
-		Rows:       []map[string]string{},
-		CommandTag: "",
+		Columns: make([]Column, len(columns)),
+		Rows:    []map[string]string{},
 	}
 
 	for i, col := range columns {
@@ -118,7 +136,41 @@ func (c *Client) Execute(sql string) (*ExecuteResult, error) {
 		return nil, err
 	}
 
+	result.CommandTag = fmt.Sprintf("%d row(s)", len(result.Rows))
 	return result, nil
+}
+
+func (c *Client) exec(sql string) (*ExecuteResult, error) {
+	res, err := c.conn.Exec(sql)
+	if err != nil {
+		return nil, err
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		rowsAffected = 0
+	}
+
+	return &ExecuteResult{
+		Columns:    []Column{},
+		Rows:       []map[string]string{},
+		CommandTag: fmt.Sprintf("OK (%d row(s) affected)", rowsAffected),
+	}, nil
+}
+
+func shouldUseQuery(sql string) bool {
+	switch {
+	case strings.HasPrefix(sql, "select"),
+		strings.HasPrefix(sql, "show"),
+		strings.HasPrefix(sql, "with"),
+		strings.HasPrefix(sql, "values"),
+		strings.HasPrefix(sql, "explain"),
+		strings.HasPrefix(sql, "describe"),
+		strings.HasPrefix(sql, "desc"):
+		return true
+	default:
+		return strings.Contains(sql, " returning ")
+	}
 }
 
 // GetVersion returns PostgreSQL server version
@@ -163,19 +215,36 @@ func (c *Client) GetCurrentXLogPos() (string, error) {
 	return "", nil
 }
 
+// GetCurrentXid returns the current transaction ID when available.
+func (c *Client) GetCurrentXid() (uint64, error) {
+	result, err := c.Execute("SELECT txid_current() as xid")
+	if err != nil {
+		return 0, err
+	}
+	if len(result.Rows) > 0 {
+		if xid, ok := result.Rows[0]["xid"]; ok {
+			var parsed uint64
+			if _, err := fmt.Sscanf(xid, "%d", &parsed); err == nil {
+				return parsed, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("current xid unavailable")
+}
+
 // ExecuteResult holds the result of a query execution
 type ExecuteResult struct {
-	Columns    []Column
-	Rows        []map[string]string
-	CommandTag  string
-	Error       string
-	ErrorDetail map[string]string
+	Columns     []Column            `json:"columns"`
+	Rows        []map[string]string `json:"rows"`
+	CommandTag  string              `json:"commandTag"`
+	Error       string              `json:"error,omitempty"`
+	ErrorDetail map[string]string   `json:"errorDetail,omitempty"`
 }
 
 // Column describes a result column
 type Column struct {
-	Name string
-	Type uint32
+	Name string `json:"name"`
+	Type uint32 `json:"type"`
 }
 
 // GetSQLResult returns a human-readable string

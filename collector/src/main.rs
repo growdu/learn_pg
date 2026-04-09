@@ -1,9 +1,13 @@
+#[cfg(target_os = "linux")]
+mod ebpf;
 mod probe;
+mod wal_file;
 
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
-use probe::{RmgrId, WalInsertEvent};
+use probe::WalInsertEvent;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::env;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -32,25 +36,40 @@ struct Config {
     backend_ws_url: String,
     pg_data_dir: String,
     use_ebpf: bool,
+    poll_interval_ms: u64,
+    postgres_bin: String,
+    postgres_pid: Option<i32>,
+    bpf_object_path: String,
 }
 
 impl Config {
     fn from_env() -> Self {
         Self {
             backend_ws_url: env::var("BACKEND_WS_URL")
-                .unwrap_or_else(|_| "ws://localhost:8080".to_string()),
+                .unwrap_or_else(|_| "ws://localhost:3000/ws".to_string()),
             pg_data_dir: env::var("PG_DATA_DIR")
                 .unwrap_or_else(|_| "/var/lib/postgresql/data".to_string()),
             use_ebpf: env::var("USE_EBPF")
                 .unwrap_or_else(|_| "false".to_string())
                 .parse()
                 .unwrap_or(false),
+            poll_interval_ms: env::var("POLL_INTERVAL_MS")
+                .unwrap_or_else(|_| "3000".to_string())
+                .parse()
+                .unwrap_or(3000),
+            postgres_bin: env::var("POSTGRES_BIN")
+                .unwrap_or_else(|_| "/usr/lib/postgresql/18/bin/postgres".to_string()),
+            postgres_pid: env::var("POSTGRES_PID")
+                .ok()
+                .and_then(|pid| pid.parse().ok()),
+            bpf_object_path: env::var("BPF_OBJECT_PATH")
+                .unwrap_or_else(|_| "/app/probes/probe.bpf.o".to_string()),
         }
     }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-struct WsEvent {
+pub(crate) struct WsEvent {
     #[serde(rename = "type")]
     event_type: String,
     timestamp: u64,
@@ -59,104 +78,13 @@ struct WsEvent {
     data: serde_json::Value,
 }
 
-fn wal_to_event(e: WalInsertEvent) -> WsEvent {
+pub(crate) fn wal_to_event(e: WalInsertEvent) -> WsEvent {
     WsEvent {
         event_type: "wal_insert".to_string(),
         timestamp: now_micros(),
         pid: std::process::id(),
         seq: next_seq(),
         data: serde_json::to_value(e).unwrap(),
-    }
-}
-
-// Log-based event collector (fallback mode)
-mod log_collector {
-    use super::*;
-    use std::fs::File;
-    use std::io::{BufRead, BufReader};
-
-    pub fn parse_pg_log_line(line: &str) -> Option<WalInsertEvent> {
-        // Pattern: "LOG:  XLogInsert: rmid 3, len 42"
-        if let Some(rmid_idx) = line.find("rmid") {
-            let rest = &line[rmid_idx..];
-            let parts: Vec<&str> = rest.split_whitespace().collect();
-            if parts.len() >= 2 {
-                if let Ok(rmid) = parts[1].parse::<u8>() {
-                    let len = if let Some(len_idx) = line.find("len") {
-                        let len_rest = &line[len_idx..];
-                        let len_parts: Vec<&str> = len_rest.split_whitespace().collect();
-                        if len_parts.len() >= 2 {
-                            len_parts[1].parse().unwrap_or(0)
-                        } else {
-                            0
-                        }
-                    } else {
-                        0
-                    };
-
-                    let rmgr_name = match rmid as i32 {
-                        0 => "XLOG",
-                        1 => "Transaction",
-                        2 => "Storage",
-                        3 => "Heap",
-                        4 => "Btree",
-                        5 => "HashIndex",
-                        6 => "Gin",
-                        7 => "Gist",
-                        8 => "Spgist",
-                        9 => "GinIndex",
-                        10 => "BtreeIndex",
-                        11 => "HashIndexIndex",
-                        12 => "Sync",
-                        13 => "Generic",
-                        14 => "Logicalmsg",
-                        15 => "Standby",
-                        16 => "Heap2",
-                        17 => "Heap3",
-                        18 => "LogicalReplication",
-                        19 => "CompressionHistory",
-                        20 => "Compaction",
-                        _ => "Unknown",
-                    };
-
-                    return Some(WalInsertEvent {
-                        xlog_ptr: format!("0/{:X}", now_micros() & 0xFFFFFFF),
-                        record_len: len,
-                        rmgr_id: rmid,
-                        rmgr_name: rmgr_name.to_string(),
-                        info: 0,
-                        xid: 0,
-                        block_num: None,
-                        rel_oid: None,
-                    });
-                }
-            }
-        }
-        None
-    }
-
-    pub fn tail_log_file(path: &std::path::Path) -> Vec<WalInsertEvent> {
-        let mut events = Vec::new();
-        if let Ok(file) = File::open(path) {
-            let reader = BufReader::new(file);
-            for line in reader.lines().map(|l| l.unwrap_or_default()) {
-                if let Some(evt) = parse_pg_log_line(&line) {
-                    events.push(evt);
-                }
-            }
-        }
-        events
-    }
-}
-
-// eBPF event collector stub (requires Linux + root)
-#[cfg(target_os = "linux")]
-mod ebpf_collector {
-    pub fn init_ebpf() -> anyhow::Result<()> {
-        // Load eBPF program from probe.bpf.o
-        // Attach uprobes to postgres symbols
-        tracing::info!("eBPF mode: probes would be loaded here in production");
-        Ok(())
     }
 }
 
@@ -205,63 +133,6 @@ async fn ws_sender(
     }
 }
 
-fn generate_demo_events() -> Vec<WsEvent> {
-    let ts = now_micros();
-    vec![
-        WsEvent {
-            event_type: "xact_state".to_string(),
-            timestamp: ts,
-            pid: 1234,
-            seq: next_seq(),
-            data: serde_json::json!({
-                "xid": 100,
-                "vxid": "3/100",
-                "state": "begin"
-            }),
-        },
-        WsEvent {
-            event_type: "wal_insert".to_string(),
-            timestamp: ts + 100,
-            pid: 1234,
-            seq: next_seq(),
-            data: serde_json::json!({
-                "xlog_ptr": "0/16D4F30",
-                "record_len": 128,
-                "rmgr_id": 2,
-                "rmgr_name": "Heap",
-                "info": 0,
-                "xid": 100
-            }),
-        },
-        WsEvent {
-            event_type: "buffer_pin".to_string(),
-            timestamp: ts + 200,
-            pid: 1234,
-            seq: next_seq(),
-            data: serde_json::json!({
-                "buffer_id": 42,
-                "is_hit": false,
-                "relfilenode": 16384,
-                "fork_num": 0,
-                "block_num": 0,
-                "lock_mode": 2
-            }),
-        },
-        WsEvent {
-            event_type: "xact_state".to_string(),
-            timestamp: ts + 500,
-            pid: 1234,
-            seq: next_seq(),
-            data: serde_json::json!({
-                "xid": 100,
-                "vxid": "3/100",
-                "state": "commit",
-                "lsn": "0/16D500"
-            }),
-        },
-    ]
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
@@ -270,18 +141,50 @@ async fn main() -> Result<()> {
     println!("PG Kernel Visualizer - eBPF Collector");
     println!("Backend WS: {}", config.backend_ws_url);
     println!("PG Data Dir: {}", config.pg_data_dir);
-    println!("eBPF Mode: {}", if config.use_ebpf { "enabled" } else { "log-parse fallback" });
-
-    // Initialize eBPF if on Linux and enabled
-    #[cfg(target_os = "linux")]
-    if config.use_ebpf {
-        if let Err(e) = ebpf_collector::init_ebpf() {
-            tracing::warn!("eBPF init failed: {}, falling back to log-parse", e);
+    println!(
+        "eBPF Mode: {}",
+        if config.use_ebpf {
+            "enabled"
+        } else {
+            "log-parse fallback"
         }
+    );
+    println!("Poll Interval: {}ms", config.poll_interval_ms);
+    println!("Postgres Binary: {}", config.postgres_bin);
+    if let Some(pid) = config.postgres_pid {
+        println!("Postgres PID filter: {}", pid);
     }
+    println!("BPF Object: {}", config.bpf_object_path);
 
     let (tx, rx) = mpsc::channel::<WsEvent>(1000);
     let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+
+    #[cfg(target_os = "linux")]
+    let mut ebpf_active = false;
+    #[cfg(not(target_os = "linux"))]
+    let ebpf_active = false;
+    #[cfg(target_os = "linux")]
+    if config.use_ebpf {
+        let ebpf_config = ebpf::EbpfConfig {
+            object_path: config.bpf_object_path.clone(),
+            postgres_bin: config.postgres_bin.clone(),
+            postgres_pid: config.postgres_pid,
+        };
+        match ebpf::spawn_ebpf_collector(ebpf_config, tx.clone(), shutdown_rx.resubscribe()) {
+            Ok(()) => {
+                ebpf_active = true;
+                tracing::info!("eBPF uprobes active");
+            }
+            Err(e) => {
+                tracing::warn!("eBPF init failed: {}, falling back to WAL file polling", e);
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    if config.use_ebpf {
+        tracing::warn!("eBPF requested but this collector was built for a non-Linux target");
+    }
 
     // Spawn WS sender
     let ws_url = config.backend_ws_url.clone();
@@ -289,18 +192,19 @@ async fn main() -> Result<()> {
 
     // Spawn event generator
     let tx_clone = tx;
+    let poll_interval_ms = config.poll_interval_ms;
+    let pg_data_dir = config.pg_data_dir.clone();
+    let ebpf_requested = config.use_ebpf;
+    let ebpf_enabled = ebpf_active;
     tokio::spawn(async move {
-        let mut ticker = interval(Duration::from_secs(3));
-        let mut first = true;
+        let mut ticker = interval(Duration::from_millis(poll_interval_ms));
+        let mut seen_lsns = HashSet::new();
 
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
-                    if first {
-                        for evt in generate_demo_events() {
-                            let _ = tx_clone.send(evt).await;
-                        }
-                        first = false;
+                    for event in wal_file::collect_new_wal_events(&pg_data_dir, &mut seen_lsns, 256) {
+                        let _ = tx_clone.send(wal_to_event(event)).await;
                     }
 
                     let evt = WsEvent {
@@ -309,9 +213,11 @@ async fn main() -> Result<()> {
                         pid: std::process::id(),
                         seq: next_seq(),
                         data: serde_json::json!({
-                            "mode": if config.use_ebpf { "ebpf" } else { "log-parse" },
-                            "probes": probe::all_probe_status(),
-                            "note": "eBPF collector active"
+                            "mode": if ebpf_enabled { "ebpf-uprobe+wal-file" } else if ebpf_requested { "ebpf-requested/wal-file-active" } else { "wal-file" },
+                            "probes": probe::probe_statuses(ebpf_enabled),
+                            "note": "collector active",
+                            "wal_events_seen": seen_lsns.len(),
+                            "pg_data_dir": pg_data_dir.clone()
                         }),
                     };
                     let _ = tx_clone.send(evt).await;

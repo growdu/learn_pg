@@ -6,15 +6,20 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"path/filepath"
+	"sort"
+	"strconv"
 
 	"pg-visualizer-backend/internal/config"
 	"pg-visualizer-backend/internal/pg"
 	"pg-visualizer-backend/internal/ws"
+	"pg-visualizer-backend/pkg/clog"
+	"pg-visualizer-backend/pkg/wal"
 )
 
 // Handler holds API dependencies
 type Handler struct {
-	config *config.Config
+	config   *config.Config
 	pgClient *pg.Client
 	hub      *ws.Hub
 }
@@ -34,14 +39,14 @@ func (h *Handler) SetPGClient(client *pg.Client) {
 
 // HealthResponse represents health check response
 type HealthResponse struct {
-	Status     string `json:"status"`
+	Status      string `json:"status"`
 	PGConnected bool   `json:"pg_connected"`
 }
 
 // ServeHealth handles GET /health
 func (h *Handler) ServeHealth(w http.ResponseWriter, r *http.Request) {
 	resp := HealthResponse{
-		Status:     "ok",
+		Status:      "ok",
 		PGConnected: h.pgClient != nil,
 	}
 	if h.pgClient != nil {
@@ -106,6 +111,10 @@ func (h *Handler) ServeConnect(w http.ResponseWriter, r *http.Request) {
 	if user == "" {
 		user = h.config.PGUser
 	}
+	password := req.Password
+	if password == "" {
+		password = h.config.PGPassword
+	}
 	db := req.Database
 	if db == "" {
 		db = h.config.PGDatabase
@@ -118,7 +127,7 @@ func (h *Handler) ServeConnect(w http.ResponseWriter, r *http.Request) {
 
 	// Create new connection
 	client := &pg.Client{}
-	if err := client.Connect(host, port, user, req.Password, db); err != nil {
+	if err := client.Connect(host, port, user, password, db); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(ConnectResponse{
 			Success: false,
@@ -152,9 +161,44 @@ type ExecuteRequest struct {
 
 // ExecuteResponse represents SQL execution response
 type ExecuteResponse struct {
-	Success bool `json:"success"`
-	Result  *pg.ExecuteResult
-	Error   string `json:"error,omitempty"`
+	Success bool              `json:"success"`
+	Result  *pg.ExecuteResult `json:"result,omitempty"`
+	Error   string            `json:"error,omitempty"`
+}
+
+type WALRecordResponse struct {
+	LSN        string                 `json:"lsn"`
+	RmgrName   string                 `json:"rmgrName"`
+	Operation  string                 `json:"operation,omitempty"`
+	Info       uint8                  `json:"info"`
+	Xid        uint32                 `json:"xid"`
+	RecordLen  uint32                 `json:"recordLen"`
+	PayloadLen uint32                 `json:"payloadLen"`
+	PrevLSN    string                 `json:"prevLsn,omitempty"`
+	PageOffset uint32                 `json:"pageOffset,omitempty"`
+	Blocks     []wal.BlockRef         `json:"blocks,omitempty"`
+	Details    map[string]interface{} `json:"details,omitempty"`
+}
+
+type WALResponse struct {
+	Records []WALRecordResponse `json:"records"`
+	Segment string              `json:"segment,omitempty"`
+	DataDir string              `json:"dataDir,omitempty"`
+	Limit   int                 `json:"limit"`
+	Note    string              `json:"note,omitempty"`
+}
+
+type CLOGTransactionResponse struct {
+	Xid    uint32 `json:"xid"`
+	Status string `json:"status"`
+}
+
+type CLOGResponse struct {
+	Transactions []CLOGTransactionResponse `json:"transactions"`
+	StartXid     uint32                    `json:"startXid"`
+	EndXid       uint32                    `json:"endXid"`
+	DataDir      string                    `json:"dataDir,omitempty"`
+	Note         string                    `json:"note,omitempty"`
 }
 
 // ServeExecute handles POST /api/execute
@@ -213,18 +257,59 @@ type WALRequest struct {
 
 // ServeWAL handles GET /api/wal
 func (h *Handler) ServeWAL(w http.ResponseWriter, r *http.Request) {
-	lsn := r.URL.Query().Get("lsn")
-	if lsn == "" {
-		lsn = h.config.PGDataDir
+	limit := parseIntQuery(r, "limit", 100)
+	dataDir := h.pgDataDir()
+	reader := wal.NewWALReader(dataDir)
+	segments, err := reader.ListWALSegments()
+	if err != nil || len(segments) == 0 {
+		writeJSON(w, WALResponse{
+			Records: []WALRecordResponse{},
+			DataDir: dataDir,
+			Limit:   limit,
+			Note:    "WAL segment unavailable. Confirm PG_DATA_DIR and mounted pg_wal access.",
+		})
+		return
 	}
-	limit := 100
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"lsn":   lsn,
-		"limit": limit,
-		"note":  "WAL reading requires pg_wal access. Configure PG_DATA_DIR.",
-	})
+	sort.Strings(segments)
+	segmentPath := segments[len(segments)-1]
+	records, err := reader.TailRecords(limit)
+	if err != nil {
+		writeJSON(w, WALResponse{
+			Records: []WALRecordResponse{},
+			Segment: filepath.Base(segmentPath),
+			DataDir: dataDir,
+			Limit:   limit,
+			Note:    err.Error(),
+		})
+		return
+	}
+
+	resp := WALResponse{
+		Records: make([]WALRecordResponse, 0, len(records)),
+		Segment: filepath.Base(segmentPath),
+		DataDir: dataDir,
+		Limit:   limit,
+	}
+	for _, record := range records {
+		resp.Records = append(resp.Records, WALRecordResponse{
+			LSN:        record.LSN,
+			RmgrName:   record.RmgrName,
+			Operation:  record.Operation,
+			Info:       record.Info,
+			Xid:        record.Xid,
+			RecordLen:  record.RecordLen,
+			PayloadLen: record.PayloadLen,
+			PrevLSN:    record.PrevLSN,
+			PageOffset: record.PageOffset,
+			Blocks:     record.Blocks,
+			Details:    record.Details,
+		})
+	}
+	if len(resp.Records) == 0 {
+		resp.Note = "No WAL records parsed from the selected segment yet."
+	}
+	writeJSON(w, resp)
 }
 
 // CLOGRequest represents CLOG query request
@@ -235,15 +320,37 @@ type CLOGRequest struct {
 
 // ServeCLOG handles GET /api/clog
 func (h *Handler) ServeCLOG(w http.ResponseWriter, r *http.Request) {
-	startXid := r.URL.Query().Get("start_xid")
-	endXid := r.URL.Query().Get("end_xid")
+	startXid, endXid := h.resolveXidRange(r)
+	dataDir := h.pgDataDir()
+	reader := clog.NewCLOGReader(dataDir)
+	transactions, err := reader.ReadRange(startXid, endXid)
+	if err != nil {
+		writeJSON(w, CLOGResponse{
+			Transactions: []CLOGTransactionResponse{},
+			StartXid:     startXid,
+			EndXid:       endXid,
+			DataDir:      dataDir,
+			Note:         err.Error(),
+		})
+		return
+	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"start_xid": startXid,
-		"end_xid":   endXid,
-		"note":      "CLOG reading requires pg_clog access. Configure PG_DATA_DIR.",
-	})
+	resp := CLOGResponse{
+		Transactions: make([]CLOGTransactionResponse, 0, len(transactions)),
+		StartXid:     startXid,
+		EndXid:       endXid,
+		DataDir:      dataDir,
+	}
+	for _, tx := range transactions {
+		resp.Transactions = append(resp.Transactions, CLOGTransactionResponse{
+			Xid:    tx.Xid,
+			Status: tx.Name,
+		})
+	}
+	if len(resp.Transactions) == 0 {
+		resp.Note = "No CLOG/pg_xact transactions were read for the requested range."
+	}
+	writeJSON(w, resp)
 }
 
 // ServeWS handles WebSocket upgrade at /ws
@@ -268,4 +375,52 @@ func Start(h *Handler, addr string) error {
 
 	fmt.Printf("[API] Starting server on %s\n", addr)
 	return http.ListenAndServe(addr, mux)
+}
+
+func (h *Handler) pgDataDir() string {
+	if h.pgClient != nil {
+		if dataDir, err := h.pgClient.GetPGDataDir(); err == nil && dataDir != "" {
+			return dataDir
+		}
+	}
+	return h.config.PGDataDir
+}
+
+func (h *Handler) resolveXidRange(r *http.Request) (uint32, uint32) {
+	startXid := parseIntQuery(r, "start_xid", -1)
+	endXid := parseIntQuery(r, "end_xid", -1)
+	if startXid >= 0 && endXid >= startXid {
+		return uint32(startXid), uint32(endXid)
+	}
+
+	if h.pgClient != nil {
+		currentXid, err := h.pgClient.GetCurrentXid()
+		if err == nil && currentXid > 0 {
+			end := uint32(currentXid)
+			start := uint32(0)
+			if end > 255 {
+				start = end - 255
+			}
+			return start, end
+		}
+	}
+
+	return 0, 255
+}
+
+func parseIntQuery(r *http.Request, key string, defaultValue int) int {
+	value := r.URL.Query().Get(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return defaultValue
+	}
+	return parsed
+}
+
+func writeJSON(w http.ResponseWriter, payload interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(payload)
 }

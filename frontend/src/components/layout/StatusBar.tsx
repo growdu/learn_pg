@@ -1,8 +1,12 @@
 interface StatusBarProps {
   connected: boolean
+  wsConnected: boolean
+  eventCount: number
+  lastEventType: string
+  collectorMode: string
 }
 
-export default function StatusBar({ connected }: StatusBarProps) {
+export default function StatusBar({ collectorMode, connected, eventCount, lastEventType, wsConnected }: StatusBarProps) {
   return (
     <footer style={{
       display: 'flex',
@@ -15,7 +19,16 @@ export default function StatusBar({ connected }: StatusBarProps) {
       color: 'var(--text-muted)',
     }}>
       <span>PG Kernel Visualizer v0.1.0</span>
-      <span>{connected ? 'Connected to PostgreSQL' : 'Not connected'}</span>
+      <span>
+        {connected ? 'Connected to PostgreSQL' : 'Not connected'}
+        {' | '}
+        {wsConnected ? 'WS live' : 'WS offline'}
+        {' | '}
+        events={eventCount}
+        {' | '}
+        mode={collectorMode}
+        {lastEventType ? ` | last=${lastEventType}` : ''}
+      </span>
     </footer>
   )
 }

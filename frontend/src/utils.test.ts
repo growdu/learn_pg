@@ -100,7 +100,6 @@ describe('Data Transformations', () => {
   })
 
   it('should handle transaction state transitions', () => {
-    const states = ['idle', 'started', 'in_progress', 'commit', 'abort']
     const transitions = {
       idle: ['started'],
       started: ['in_progress'],

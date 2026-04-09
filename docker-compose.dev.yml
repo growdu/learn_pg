@@ -41,16 +41,15 @@ services:
       PG_PASSWORD: postgres
       PG_DATABASE: postgres
       API_PORT: 3010
-      WS_PORT: 8100
+      WS_PORT: 3010
       COLLECTOR_WS_URL: ws://collector:8090
     ports:
       - "3010:3010"
-      - "8100:8080"
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3001/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3010/health"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -62,10 +61,15 @@ services:
       dockerfile: Dockerfile.dev
     container_name: pgv-collector
     environment:
-      BACKEND_WS_URL: ws://backend:8080
+      BACKEND_WS_URL: ws://127.0.0.1:3010/ws
       COLLECTOR_PORT: 8090
       PG_DATA_DIR: /var/lib/postgresql/data
+      USE_EBPF: "true"
+      BPF_OBJECT_PATH: /app/probes/probe.bpf.o
+      POSTGRES_BIN: /usr/local/bin/postgres
     network_mode: host
+    pid: host
+    privileged: true
     cap_add:
       - SYS_ADMIN
       - SYS_RESOURCE
@@ -75,6 +79,8 @@ services:
       - seccomp=unconfined
     volumes:
       - /lib/modules:/lib/modules:ro
+      - /sys/kernel/debug:/sys/kernel/debug
+      - /sys/fs/bpf:/sys/fs/bpf
       - pg_data:/var/lib/postgresql
     depends_on:
       - postgres
@@ -89,8 +95,8 @@ services:
     container_name: pgv-frontend
     network_mode: host
     environment:
-      VITE_API_URL: http://192.168.3.99:3010
-      VITE_WS_URL: ws://192.168.3.99:8100
+      VITE_API_URL: http://localhost:3010
+      VITE_WS_URL: ws://localhost:3010/ws
     ports:
       - "5174:5173"
     depends_on:

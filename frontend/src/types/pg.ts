@@ -1,14 +1,14 @@
 export interface Column {
-  Name: string
-  Type: number
+  name: string
+  type: number
 }
 
 export interface ExecuteResult {
-  Columns: Column[]
-  Rows: Record<string, string>[]
-  CommandTag: string
-  Error: string
-  ErrorDetail: Record<string, string>
+  columns: Column[]
+  rows: Record<string, string>[]
+  commandTag: string
+  error?: string
+  errorDetail?: Record<string, string>
 }
 
 export interface ExecuteResponse {

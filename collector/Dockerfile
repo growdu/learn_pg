@@ -10,12 +10,12 @@ registry = "sparse+https://mirrors.ustc.edu.cn/crates.io-index/"' \
     > /root/.cargo/config.toml
 
 # Install build dependencies
-RUN apk add --no-cache clang llvm lld elfutils-dev libelf-dev openssl-dev
+RUN apk add --no-cache clang llvm lld elfutils-dev libelf-dev libbpf-dev linux-headers openssl-dev
 
 WORKDIR /app
 
 # Copy Cargo files first for better caching
-COPY collector/Cargo.toml collector/Cargo.lock ./
+COPY Cargo.toml Cargo.lock ./
 
 # Create dummy source and pre-build dependencies
 RUN mkdir src && echo "fn main() {}" > src/main.rs && \
@@ -23,7 +23,11 @@ RUN mkdir src && echo "fn main() {}" > src/main.rs && \
     rm -rf src
 
 # Copy source code
-COPY collector/ .
+COPY . .
+
+# Build the userspace uprobe BPF object. The collector still falls back to WAL
+# file polling at runtime if the kernel or container permissions reject eBPF.
+RUN ./build-ebpf.sh
 
 # Build
 RUN cargo build --release
@@ -36,5 +40,6 @@ RUN apk add --no-cache libelf
 WORKDIR /app
 
 COPY --from=0 /app/target/release/pg-collector /app/collector
+COPY --from=0 /app/probes/probe.bpf.o /app/probes/probe.bpf.o
 
 CMD ["/app/collector"]

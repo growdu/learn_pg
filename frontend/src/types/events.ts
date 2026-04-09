@@ -6,15 +6,30 @@ export interface ProbeEvent {
   data: Record<string, unknown>
 }
 
+export interface HeartbeatEvent extends ProbeEvent {
+  type: 'heartbeat'
+  data: {
+    mode?: string
+    probes?: unknown
+    note?: string
+  }
+}
+
 export interface WALInsertEvent extends ProbeEvent {
   type: 'wal_insert'
   data: {
     xlog_ptr: string
+    lsn_value?: number
     record_len: number
+    payload_len?: number
     rmgr_id: number
     rmgr_name: string
+    operation?: string
     info: number
     xid: number
+    block_num?: number
+    rel_oid?: number
+    source?: string
   }
 }
 
