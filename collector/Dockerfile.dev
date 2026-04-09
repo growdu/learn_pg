@@ -1,6 +1,6 @@
 FROM rust:1.75-alpine
 
-RUN apk add --no-cache clang llvm lld elfutils-dev libelf-dev openssl-dev
+RUN apk add --no-cache clang llvm lld elfutils-dev libelf-dev libbpf-dev linux-headers openssl-dev
 
 WORKDIR /app
 
@@ -10,6 +10,7 @@ RUN cargo build --release 2>/dev/null || true
 
 COPY . .
 RUN rm -rf src/main.rs
+RUN ./build-ebpf.sh
 
 RUN cargo build --release
 
@@ -18,5 +19,6 @@ RUN apk add --no-cache libelf
 
 WORKDIR /app
 COPY --from=0 /app/target/release/pg-collector /app/collector
+COPY --from=0 /app/probes/probe.bpf.o /app/probes/probe.bpf.o
 
 CMD ["/app/collector"]

@@ -27,15 +27,15 @@ func TestStatusName(t *testing.T) {
 
 func TestGetCLOGPath(t *testing.T) {
 	tests := []struct {
-		xid   uint32
+		xid     uint32
 		dataDir string
-		want  string
+		want    string
 	}{
-		{0, "/data", "/data/pg_clog/0000"},
-		{100, "/data", "/data/pg_clog/0000"},
-		{8192, "/data", "/data/pg_clog/0001"},
-		{8193, "/data", "/data/pg_clog/0001"},
-		{16384, "/data", "/data/pg_clog/0002"},
+		{0, "/data", "/data/pg_xact/0000"},
+		{100, "/data", "/data/pg_xact/0000"},
+		{TransactionsPerPage, "/data", "/data/pg_xact/0000"},
+		{uint32(transactionsPerSegment), "/data", "/data/pg_xact/0001"},
+		{uint32(transactionsPerSegment) + 1, "/data", "/data/pg_xact/0001"},
 	}
 
 	for _, tt := range tests {
@@ -75,12 +75,12 @@ func TestParsePage(t *testing.T) {
 	if page.StartXid != 0 {
 		t.Errorf("StartXid = %d, want 0", page.StartXid)
 	}
-	if page.EndXid != 8192 {
-		t.Errorf("EndXid = %d, want 8192", page.EndXid)
+	if page.EndXid != TransactionsPerPage-1 {
+		t.Errorf("EndXid = %d, want %d", page.EndXid, TransactionsPerPage-1)
 	}
 	// Each byte has 4 transactions (2 bits each), so 8192 bytes = 32768 transactions
-	if len(page.Transactions) != 32768 {
-		t.Errorf("len(Transactions) = %d, want 32768", len(page.Transactions))
+	if len(page.Transactions) != TransactionsPerPage {
+		t.Errorf("len(Transactions) = %d, want %d", len(page.Transactions), TransactionsPerPage)
 	}
 }
 
@@ -127,8 +127,8 @@ func TestGetStatistics(t *testing.T) {
 	page, _ := reader.parsePage(0, data)
 	stats := GetStatistics(page)
 
-	if stats["total"] != 32768 {
-		t.Errorf("total = %d, want 32768", stats["total"])
+	if stats["total"] != TransactionsPerPage {
+		t.Errorf("total = %d, want %d", stats["total"], TransactionsPerPage)
 	}
 	if stats["committed"] != 4 {
 		t.Errorf("committed = %d, want 4", stats["committed"])
@@ -136,8 +136,8 @@ func TestGetStatistics(t *testing.T) {
 	if stats["aborted"] != 0 {
 		t.Errorf("aborted = %d, want 0", stats["aborted"])
 	}
-	if stats["in_progress"] != 32764 {
-		t.Errorf("in_progress = %d, want 32764", stats["in_progress"])
+	if stats["in_progress"] != TransactionsPerPage-4 {
+		t.Errorf("in_progress = %d, want %d", stats["in_progress"], TransactionsPerPage-4)
 	}
 }
 

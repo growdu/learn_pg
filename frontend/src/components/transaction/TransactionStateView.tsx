@@ -28,6 +28,8 @@ const STATE_COLORS: Record<string, string> = {
   abort: '#f85149',
 }
 
+const STATE_ORDER: TransactionState['state'][] = ['idle', 'started', 'in_progress', 'commit', 'abort']
+
 interface TransactionStateViewProps {
   transactions?: TransactionState[]
 }
@@ -41,6 +43,18 @@ export default function TransactionStateView({ transactions }: TransactionStateV
   const data = transactions || DEMO_STATES
 
   useEffect(() => {
+    if (!transactions || transactions.length === 0) {
+      setAnimationPlaying(true)
+      return
+    }
+
+    const latest = transactions[transactions.length - 1]
+    const nextStep = Math.max(0, STATE_ORDER.indexOf(latest.state))
+    setAnimationPlaying(false)
+    setCurrentStep(nextStep)
+  }, [transactions])
+
+  useEffect(() => {
     if (!svgRef.current || !containerRef.current) return
 
     const svg = d3.select(svgRef.current)
@@ -52,7 +66,7 @@ export default function TransactionStateView({ transactions }: TransactionStateV
     svg.attr('width', width).attr('height', height)
 
     // State machine positions
-    const states = ['idle', 'started', 'in_progress', 'commit', 'abort'] as const
+    const states = STATE_ORDER
     const stateWidth = (width - 60) / (states.length - 1)
     const statePositions: Record<string, number> = {}
     states.forEach((s, i) => {

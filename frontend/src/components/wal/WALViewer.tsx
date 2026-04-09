@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000'
+const API_BASE = import.meta.env.VITE_API_URL || ''
 
 export default function WALViewer() {
   const [records, setRecords] = useState<Record<string, unknown>[]>([])
@@ -72,9 +72,11 @@ export default function WALViewer() {
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
                 <th style={{ padding: '0.5rem', textAlign: 'left', color: 'var(--text-muted)' }}>LSN</th>
                 <th style={{ padding: '0.5rem', textAlign: 'left', color: 'var(--text-muted)' }}>RMGR</th>
+                <th style={{ padding: '0.5rem', textAlign: 'left', color: 'var(--text-muted)' }}>Operation</th>
                 <th style={{ padding: '0.5rem', textAlign: 'left', color: 'var(--text-muted)' }}>Info</th>
                 <th style={{ padding: '0.5rem', textAlign: 'left', color: 'var(--text-muted)' }}>XID</th>
                 <th style={{ padding: '0.5rem', textAlign: 'left', color: 'var(--text-muted)' }}>Length</th>
+                <th style={{ padding: '0.5rem', textAlign: 'left', color: 'var(--text-muted)' }}>Blocks</th>
               </tr>
             </thead>
             <tbody>
@@ -82,9 +84,11 @@ export default function WALViewer() {
                 <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
                   <td style={{ padding: '0.5rem', color: 'var(--accent)' }}>{String(rec.lsn ?? '')}</td>
                   <td style={{ padding: '0.5rem' }}>{String(rec.rmgrName ?? '')}</td>
+                  <td style={{ padding: '0.5rem' }}>{String(rec.operation ?? '')}</td>
                   <td style={{ padding: '0.5rem' }}>{String(rec.info ?? '')}</td>
                   <td style={{ padding: '0.5rem' }}>{String(rec.xid ?? '')}</td>
-                  <td style={{ padding: '0.5rem' }}>{String(rec.recordLen ?? '')}</td>
+                  <td style={{ padding: '0.5rem' }}>{String(rec.recordLen ?? '')} / {String(rec.payloadLen ?? 0)}</td>
+                  <td style={{ padding: '0.5rem' }}>{formatBlocks(rec.blocks)}</td>
                 </tr>
               ))}
             </tbody>
@@ -106,4 +110,20 @@ export default function WALViewer() {
       )}
     </div>
   )
+}
+
+function formatBlocks(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return '-'
+  }
+
+  return value
+    .slice(0, 2)
+    .map((block) => {
+      const ref = block as Record<string, unknown>
+      const rel = ref.relNode != null ? `rel ${String(ref.relNode)}` : 'rel ?'
+      const blk = ref.blockNum != null ? `blk ${String(ref.blockNum)}` : 'blk ?'
+      return `${rel}:${blk}`
+    })
+    .join(', ')
 }

@@ -10,6 +10,13 @@ import (
 // PageSize for CLOG is 8KB
 const PageSize = 8192
 
+const (
+	transactionsPerByte    = 4
+	TransactionsPerPage    = PageSize * transactionsPerByte
+	pagesPerSegment        = 32
+	transactionsPerSegment = TransactionsPerPage * pagesPerSegment
+)
+
 // Transaction status values (2 bits per transaction)
 const (
 	StatusInProgress = 0x00
@@ -46,9 +53,9 @@ func NewCLOGReader(dataDir string) *CLOGReader {
 
 // Page represents a single CLOG page
 type Page struct {
-	PageNum    int
-	StartXid   uint32
-	EndXid     uint32
+	PageNum      int
+	StartXid     uint32
+	EndXid       uint32
 	Transactions []TransactionStatus
 }
 
@@ -61,20 +68,24 @@ type TransactionStatus struct {
 
 // GetCLOGPath returns the path to the CLOG file for a given transaction ID
 func GetCLOGPath(dataDir string, xid uint32) string {
-	subdir := xid / 8192
-	clogDir := filepath.Join(dataDir, "pg_clog")
+	subdir := xid / transactionsPerSegment
+	clogDir := resolveStatusDir(dataDir)
 	return filepath.Join(clogDir, fmt.Sprintf("%04X", subdir))
 }
 
 // ReadPage reads a CLOG page from the given file at given offset
 func (r *CLOGReader) ReadPage(filePath string, pageNum int) (*Page, error) {
+	return r.readPage(filePath, pageNum, pageNum%pagesPerSegment)
+}
+
+func (r *CLOGReader) readPage(filePath string, absolutePageNum int, pageOffset int) (*Page, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
 
-	offset := int64(pageNum) * PageSize
+	offset := int64(pageOffset) * PageSize
 	if _, err := f.Seek(offset, 0); err != nil {
 		return nil, err
 	}
@@ -88,18 +99,18 @@ func (r *CLOGReader) ReadPage(filePath string, pageNum int) (*Page, error) {
 		return nil, fmt.Errorf("incomplete read: got %d, expected %d", n, PageSize)
 	}
 
-	return r.parsePage(pageNum, data)
+	return r.parsePage(absolutePageNum, data)
 }
 
 func (r *CLOGReader) parsePage(pageNum int, data []byte) (*Page, error) {
-	startXid := uint32(pageNum) * 8192
-	endXid := startXid + 8192
+	startXid := uint32(pageNum) * TransactionsPerPage
+	endXid := startXid + TransactionsPerPage - 1
 
 	page := &Page{
 		PageNum:      pageNum,
 		StartXid:     startXid,
 		EndXid:       endXid,
-		Transactions: make([]TransactionStatus, 0, 8192),
+		Transactions: make([]TransactionStatus, 0, TransactionsPerPage),
 	}
 
 	// Each byte contains 4 transactions (2 bits each)
@@ -125,12 +136,13 @@ func (r *CLOGReader) ReadRange(startXid, endXid uint32) ([]TransactionStatus, er
 	var results []TransactionStatus
 
 	// Calculate which pages we need
-	startPage := startXid / 8192
-	endPage := endXid / 8192
+	startPage := startXid / TransactionsPerPage
+	endPage := endXid / TransactionsPerPage
 
 	for pageNum := startPage; pageNum <= endPage; pageNum++ {
-		filePath := filepath.Join(r.dataDir, "pg_clog", fmt.Sprintf("%04X", pageNum))
-		page, err := r.ReadPage(filePath, 0)
+		segmentPath := filepath.Join(resolveStatusDir(r.dataDir), fmt.Sprintf("%04X", pageNum/pagesPerSegment))
+		pageOffset := int(pageNum % pagesPerSegment)
+		page, err := r.readPage(segmentPath, int(pageNum), pageOffset)
 		if err != nil {
 			// File may not exist or be readable
 			continue
@@ -243,4 +255,17 @@ func (r *SubtransReader) GetParent(subxid uint32) (uint32, error) {
 	}
 
 	return parent, nil
+}
+
+func resolveStatusDir(dataDir string) string {
+	candidates := []string{
+		filepath.Join(dataDir, "pg_xact"),
+		filepath.Join(dataDir, "pg_clog"),
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return candidates[0]
 }

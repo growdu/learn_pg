@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000'
+const API_BASE = import.meta.env.VITE_API_URL || ''
 const STATUS_COLORS: Record<string, string> = {
   'in-progress': '#7d8590',
   'committed': '#3fb950',

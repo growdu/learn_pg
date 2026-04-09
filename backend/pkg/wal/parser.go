@@ -2,7 +2,6 @@ package wal
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 )
 
@@ -12,9 +11,9 @@ var RMgrInfo = map[uint8]struct {
 	MaxLen   uint8
 	DescFunc string
 }{
-	0: {"XLOG", 0xFF, "Transaction/bulk operations"},
-	1: {"Heap2", 0x20, "Heap2 operations"},
-	2: {"Heap", 0x20, "Heap operations"},
+	0:  {"XLOG", 0xFF, "Transaction/bulk operations"},
+	1:  {"Heap2", 0x20, "Heap2 operations"},
+	2:  {"Heap", 0x20, "Heap operations"},
 	3:  {"Btree", 0x2F, "Btree operations"},
 	4:  {"Hash", 0x20, "Hash operations"},
 	5:  {"Gist", 0x20, "GiST operations"},
@@ -26,10 +25,10 @@ var RMgrInfo = map[uint8]struct {
 
 // Info flag masks
 const (
-	XLOG_INFO_MASK_COMPRESS    = 0x01
-	XLOG_INFO_MASK_BKP_RMGR    = 0x40
-	XLOG_INFO_MASK_XID_SPEC    = 0x08
-	XLOG_INFO_MASK_HEAP_CONC   = 0x20
+	XLOG_INFO_MASK_COMPRESS  = 0x01
+	XLOG_INFO_MASK_BKP_RMGR  = 0x40
+	XLOG_INFO_MASK_XID_SPEC  = 0x08
+	XLOG_INFO_MASK_HEAP_CONC = 0x20
 )
 
 // RecordInfo describes the operation type
@@ -41,11 +40,12 @@ type RecordInfo struct {
 // ParseRecordInfo returns operation name and description
 func ParseRecordInfo(rmgrid, info uint8) RecordInfo {
 	desc := "unknown"
+	baseInfo := info
 
 	// Determine operation from RMGR-specific info bits
 	switch rmgrid {
 	case 0: // XLOG
-		switch info & 0x0F {
+		switch baseInfo & 0x0F {
 		case 0x00:
 			desc = "XLOG_NOOP"
 		case 0x01:
@@ -53,10 +53,10 @@ func ParseRecordInfo(rmgrid, info uint8) RecordInfo {
 		case 0x02:
 			desc = "XLOG/SLRU"
 		default:
-			desc = fmt.Sprintf("XLOG/OP_%d", info&0x0F)
+			desc = fmt.Sprintf("XLOG/OP_%d", baseInfo&0x0F)
 		}
 	case 1: // Heap2
-		switch info {
+		switch baseInfo {
 		case 0x00:
 			desc = "HEAP2/CLEAN"
 		case 0x10:
@@ -66,10 +66,10 @@ func ParseRecordInfo(rmgrid, info uint8) RecordInfo {
 		case 0x30:
 			desc = "HEAP2/FREEZE"
 		default:
-			desc = fmt.Sprintf("HEAP2/OP_%d", info)
+			desc = fmt.Sprintf("HEAP2/OP_%d", baseInfo)
 		}
 	case 2: // Heap
-		switch info {
+		switch baseInfo {
 		case 0x00:
 			desc = "HEAP/INSERT"
 		case 0x10:
@@ -83,14 +83,14 @@ func ParseRecordInfo(rmgrid, info uint8) RecordInfo {
 		case 0x50:
 			desc = "HEAP/TBLSPC_CREATE"
 		default:
-			desc = fmt.Sprintf("HEAP/OP_%d", info)
+			desc = fmt.Sprintf("HEAP/OP_%d", baseInfo)
 		}
 	case 3: // Btree
-		desc = fmt.Sprintf("BTREE/OP_%d", info&0x0F)
+		desc = fmt.Sprintf("BTREE/OP_%d", baseInfo&0x0F)
 	case 10: // Heap3
-		desc = fmt.Sprintf("HEAP3/OP_%d", info)
+		desc = fmt.Sprintf("HEAP3/OP_%d", baseInfo)
 	default:
-		desc = fmt.Sprintf("RMGR_%d/OP_%d", rmgrid, info)
+		desc = fmt.Sprintf("RMGR_%d/OP_%d", rmgrid, baseInfo)
 	}
 
 	return RecordInfo{OpName: desc, Desc: desc}
@@ -147,11 +147,11 @@ func DumpHex(data []byte, bytesPerLine int) string {
 // This is a simplified parser for demonstration
 func ParseRMgrData(rmgrid uint8, info uint8, data []byte) map[string]interface{} {
 	result := map[string]interface{}{
-		"rmgrid":  rmgrid,
-		"rmgr":    RmgrNames[rmgrid],
-		"info":    info,
-		"len":     len(data),
-		"hex":     HexEncode(data[:min(64, len(data))]),
+		"rmgrid": rmgrid,
+		"rmgr":   RmgrNames[rmgrid],
+		"info":   info,
+		"len":    len(data),
+		"hex":    HexEncode(data[:min(64, len(data))]),
 	}
 
 	if len(data) > 64 {
@@ -163,15 +163,15 @@ func ParseRMgrData(rmgrid uint8, info uint8, data []byte) map[string]interface{}
 	switch rmgrid {
 	case 0: // XLOG - typically contains XLogRecData structures
 		if len(data) >= 8 {
-			result["next_len"] = binary.BigEndian.Uint32(data[0:4])
+			result["next_len"] = readLE32(data[0:4])
 			result["block_id"] = data[4]
 		}
 	case 2: // Heap
 		if len(data) >= 24 {
-			result["block_rnode"] = binary.BigEndian.Uint32(data[0:4])
-			result["block_forknum"] = binary.BigEndian.Uint32(data[4:8])
-			result["block_num"] = binary.BigEndian.Uint32(data[8:12])
-			result["page_offset"] = binary.BigEndian.Uint16(data[12:14])
+			result["block_rnode"] = readLE32(data[0:4])
+			result["block_forknum"] = readLE32(data[4:8])
+			result["block_num"] = readLE32(data[8:12])
+			result["page_offset"] = uint16(data[12]) | uint16(data[13])<<8
 		}
 	}
 

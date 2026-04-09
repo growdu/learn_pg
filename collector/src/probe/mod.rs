@@ -10,26 +10,17 @@ use serde::{Deserialize, Serialize};
 #[repr(u8)]
 pub enum RmgrId {
     XLOG = 0,
-    Transaction = 1,
-    Storage = 2,
-    Heap = 3,
-    Btree = 4,
-    HashIndex = 5,
-    Gin = 6,
-    Gist = 7,
-    Spgist = 8,
-    GinIndex = 9,
-    BtreeIndex = 10,
-    HashIndexIndex = 11,
-    Sync = 12,
-    Generic = 13,
-    Logicalmsg = 14,
-    Standby = 15,
-    Heap2 = 16,
-    Heap3 = 17,
-    LogicalReplication = 18,
-    CompressionHistory = 19,
-    Compaction = 20,
+    Heap2 = 1,
+    Heap = 2,
+    Btree = 3,
+    Hash = 4,
+    Gist = 5,
+    Spgist = 6,
+    Gin = 7,
+    Brin = 8,
+    Standby = 9,
+    Heap3 = 10,
+    Logical = 11,
     /// Keep this last - it's the count of known RMGRs
     MaxRmgrId,
 }
@@ -38,26 +29,17 @@ impl From<u8> for RmgrId {
     fn from(v: u8) -> Self {
         match v {
             0 => RmgrId::XLOG,
-            1 => RmgrId::Transaction,
-            2 => RmgrId::Storage,
-            3 => RmgrId::Heap,
-            4 => RmgrId::Btree,
-            5 => RmgrId::HashIndex,
-            6 => RmgrId::Gin,
-            7 => RmgrId::Gist,
-            8 => RmgrId::Spgist,
-            9 => RmgrId::GinIndex,
-            10 => RmgrId::BtreeIndex,
-            11 => RmgrId::HashIndexIndex,
-            12 => RmgrId::Sync,
-            13 => RmgrId::Generic,
-            14 => RmgrId::Logicalmsg,
-            15 => RmgrId::Standby,
-            16 => RmgrId::Heap2,
-            17 => RmgrId::Heap3,
-            18 => RmgrId::LogicalReplication,
-            19 => RmgrId::CompressionHistory,
-            20 => RmgrId::Compaction,
+            1 => RmgrId::Heap2,
+            2 => RmgrId::Heap,
+            3 => RmgrId::Btree,
+            4 => RmgrId::Hash,
+            5 => RmgrId::Gist,
+            6 => RmgrId::Spgist,
+            7 => RmgrId::Gin,
+            8 => RmgrId::Brin,
+            9 => RmgrId::Standby,
+            10 => RmgrId::Heap3,
+            11 => RmgrId::Logical,
             _ => RmgrId::MaxRmgrId,
         }
     }
@@ -67,29 +49,66 @@ impl RmgrId {
     pub fn name(&self) -> &'static str {
         match self {
             RmgrId::XLOG => "XLOG",
-            RmgrId::Transaction => "Transaction",
-            RmgrId::Storage => "Storage",
+            RmgrId::Heap2 => "Heap2",
             RmgrId::Heap => "Heap",
             RmgrId::Btree => "Btree",
-            RmgrId::HashIndex => "HashIndex",
-            RmgrId::Gin => "Gin",
+            RmgrId::Hash => "Hash",
             RmgrId::Gist => "Gist",
             RmgrId::Spgist => "Spgist",
-            RmgrId::GinIndex => "GinIndex",
-            RmgrId::BtreeIndex => "BtreeIndex",
-            RmgrId::HashIndexIndex => "HashIndexIndex",
-            RmgrId::Sync => "Sync",
-            RmgrId::Generic => "Generic",
-            RmgrId::Logicalmsg => "Logicalmsg",
+            RmgrId::Gin => "Gin",
+            RmgrId::Brin => "BRIN",
             RmgrId::Standby => "Standby",
-            RmgrId::Heap2 => "Heap2",
             RmgrId::Heap3 => "Heap3",
-            RmgrId::LogicalReplication => "LogicalReplication",
-            RmgrId::CompressionHistory => "CompressionHistory",
-            RmgrId::Compaction => "Compaction",
+            RmgrId::Logical => "Logical",
             RmgrId::MaxRmgrId => "Unknown",
         }
     }
+}
+
+pub fn operation_name(rmgr_id: u8, info: u8) -> String {
+    match rmgr_id {
+        0 => match info & 0x0F {
+            0x00 => "XLOG_NOOP".to_string(),
+            0x01 => "XLOG/NEXTOID".to_string(),
+            0x02 => "XLOG/SLRU".to_string(),
+            op => format!("XLOG/OP_{}", op),
+        },
+        1 => match info {
+            0x00 => "HEAP2/CLEAN".to_string(),
+            0x10 => "HEAP2/NEW_CID".to_string(),
+            0x20 => "HEAP2/VISIBLE".to_string(),
+            0x30 => "HEAP2/FREEZE".to_string(),
+            op => format!("HEAP2/OP_{}", op),
+        },
+        2 => match info {
+            0x00 => "HEAP/INSERT".to_string(),
+            0x10 => "HEAP/DELETE".to_string(),
+            0x20 => "HEAP/UPDATE".to_string(),
+            0x30 => "HEAP/HOT_UPDATE".to_string(),
+            0x40 => "HEAP/TRUNCATE".to_string(),
+            0x50 => "HEAP/TBLSPC_CREATE".to_string(),
+            op => format!("HEAP/OP_{}", op),
+        },
+        3 => format!("BTREE/OP_{}", info & 0x0F),
+        10 => format!("HEAP3/OP_{}", info),
+        _ => format!("RMGR_{}/OP_{}", rmgr_id, info),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WalBlockRef {
+    pub id: u8,
+    pub fork_num: u8,
+    pub block_num: u32,
+    pub has_image: bool,
+    pub has_data: bool,
+    pub will_init: bool,
+    pub same_rel: bool,
+    pub data_len: u16,
+    pub image_len: Option<u16>,
+    pub rel_spc_node: Option<u32>,
+    pub rel_db_node: Option<u32>,
+    pub rel_node: Option<u32>,
 }
 
 /// Transaction state transitions
@@ -145,12 +164,18 @@ impl LockMode {
 pub struct WalInsertEvent {
     /// WAL location pointer (e.g., "0/16D4F30")
     pub xlog_ptr: String,
+    /// Numeric LSN value.
+    pub lsn_value: u64,
     /// Length of the WAL record
     pub record_len: u32,
+    /// Length of record payload after fixed WAL header
+    pub payload_len: u32,
     /// Resource Manager ID
     pub rmgr_id: u8,
     /// Resource Manager name
     pub rmgr_name: String,
+    /// Decoded operation name
+    pub operation: String,
     /// Info flags from the WAL record header
     pub info: u8,
     /// Transaction ID that generated this WAL
@@ -159,6 +184,10 @@ pub struct WalInsertEvent {
     pub block_num: Option<u32>,
     /// Relation OID (if applicable)
     pub rel_oid: Option<u32>,
+    /// Parsed WAL block references.
+    pub blocks: Vec<WalBlockRef>,
+    /// Event source: wal-file or ebpf-uprobe.
+    pub source: String,
 }
 
 /// Buffer Pin/Unpin event data
@@ -194,6 +223,7 @@ pub struct XactStateEvent {
 }
 
 /// Probe target: a function in PostgreSQL to instrument
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ProbeTarget {
     /// Symbol name to attach uprobe to
@@ -317,11 +347,15 @@ impl Default for ProbeStatus {
 
 /// Collects all probe statuses
 pub fn all_probe_status() -> Vec<ProbeStatus> {
+    probe_statuses(false)
+}
+
+pub fn probe_statuses(enabled: bool) -> Vec<ProbeStatus> {
     PROBE_TARGETS
         .iter()
         .map(|(name, _)| ProbeStatus {
             name: name.to_string(),
-            enabled: false,
+            enabled,
             hit_count: 0,
             error_count: 0,
         })
@@ -342,7 +376,7 @@ mod tests {
     #[test]
     fn test_rmgr_id_from_u8() {
         assert_eq!(RmgrId::from(0u8), RmgrId::XLOG);
-        assert_eq!(RmgrId::from(4u8), RmgrId::Btree);
+        assert_eq!(RmgrId::from(3u8), RmgrId::Btree);
         assert_eq!(RmgrId::from(99u8), RmgrId::MaxRmgrId);
     }
 
@@ -364,18 +398,31 @@ mod tests {
     fn test_wal_insert_event() {
         let event = WalInsertEvent {
             xlog_ptr: "0/16D4F30".to_string(),
+            lsn_value: 0x16D4F30,
             record_len: 128,
+            payload_len: 104,
             rmgr_id: 2,
             rmgr_name: "Heap".to_string(),
+            operation: "HEAP/INSERT".to_string(),
             info: 0,
             xid: 100,
             block_num: Some(42),
             rel_oid: Some(16384),
+            blocks: vec![WalBlockRef {
+                id: 0,
+                fork_num: 0,
+                block_num: 42,
+                has_data: true,
+                rel_node: Some(16384),
+                ..WalBlockRef::default()
+            }],
+            source: "wal-file".to_string(),
         };
 
         assert_eq!(event.rmgr_id, 2);
         assert_eq!(event.record_len, 128);
         assert_eq!(event.block_num, Some(42));
+        assert_eq!(event.operation, "HEAP/INSERT");
     }
 
     #[test]

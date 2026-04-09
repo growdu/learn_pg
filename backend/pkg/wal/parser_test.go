@@ -62,7 +62,7 @@ func TestDumpHexCustomBytesPerLine(t *testing.T) {
 
 func TestParseRMgrData(t *testing.T) {
 	// Test XLOG rmgrid
-	data := []byte{0, 0, 0, 10, 1, 2, 3, 4, 5, 6, 7, 8}
+	data := []byte{10, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8}
 	result := ParseRMgrData(0, 0, data)
 
 	if result["rmgrid"].(uint8) != 0 {
@@ -79,18 +79,9 @@ func TestParseRMgrData(t *testing.T) {
 func TestParseRMgrDataHeap(t *testing.T) {
 	// Test Heap rmgrid
 	data := make([]byte, 24)
-	data[0] = 0x00
-	data[1] = 0x00
-	data[2] = 0x00
-	data[3] = 0x01 // block_rnode = 1
-	data[4] = 0x00
-	data[5] = 0x00
-	data[6] = 0x00
-	data[7] = 0x01 // block_forknum = 1
-	data[8] = 0x00
-	data[9] = 0x00
-	data[10] = 0x00
-	data[11] = 0x05 // block_num = 5
+	data[0] = 0x01
+	data[4] = 0x01
+	data[8] = 0x05
 
 	result := ParseRMgrData(2, 0, data)
 

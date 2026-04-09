@@ -6,11 +6,16 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-pgv}-collector
     environment:
       POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
-      BACKEND_WS_URL: "ws://${BACKEND_HOST:-backend}:${BACKEND_WS_PORT:-8080}"
+      BACKEND_WS_URL: "ws://${BACKEND_HOST:-127.0.0.1}:${BACKEND_WS_PORT:-3000}/ws"
       COLLECTOR_PORT: ${COLLECTOR_PORT:-8090}
       PG_DATA_DIR: ${PG_DATA_DIR:-/var/lib/postgresql/data}
       USE_EBPF: ${USE_EBPF:-false}
+      BPF_OBJECT_PATH: ${BPF_OBJECT_PATH:-/app/probes/probe.bpf.o}
+      POSTGRES_BIN: ${POSTGRES_BIN:-/usr/local/bin/postgres}
+      POSTGRES_PID: ${POSTGRES_PID:-}
     network_mode: host
+    pid: host
+    privileged: true
     cap_add:
       - SYS_ADMIN
       - SYS_RESOURCE
@@ -20,6 +25,8 @@ services:
       - seccomp=unconfined
     volumes:
       - /lib/modules:/lib/modules:ro
+      - /sys/kernel/debug:/sys/kernel/debug
+      - /sys/fs/bpf:/sys/fs/bpf
       - ${PG_DATA_VOLUME:-pg_data}:${PG_DATA_DIR:-/var/lib/postgresql/data}
     depends_on:
       - postgres

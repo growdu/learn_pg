@@ -11,6 +11,8 @@ import LockGraphView from './components/lock/LockGraphView'
 import MemoryStructView from './components/memory/MemoryStructView'
 import PlanTreeView from './components/pipeline/PlanTreeView'
 import TransactionStateView from './components/transaction/TransactionStateView'
+import { useVisualizationData } from './hooks/useVisualizationData'
+import { useWebSocket } from './hooks/useWebSocket'
 
 type View = 'home' | 'write' | 'read' | 'transaction' | 'xact_state' | 'wal' | 'clog' | 'buffer' | 'lock' | 'memory' | 'plan'
 
@@ -18,6 +20,8 @@ function App() {
   const [currentView, setCurrentView] = useState<View>('home')
   const [connected, setConnected] = useState(false)
   const [pgVersion, setPgVersion] = useState('')
+  const { connected: wsConnected } = useWebSocket()
+  const { buffers, collectorMode, eventCount, lastEventType, transactions, writeStages } = useVisualizationData()
 
   const renderView = () => {
     switch (currentView) {
@@ -26,15 +30,15 @@ function App() {
       case 'clog':
         return <CLOGViewer />
       case 'write':
-        return <PipelineView type="write" />
+        return <PipelineView type="write" stages={writeStages} />
       case 'read':
         return <PipelineView type="read" />
       case 'transaction':
         return <PipelineView type="transaction" />
       case 'xact_state':
-        return <TransactionStateView />
+        return <TransactionStateView transactions={transactions.length > 0 ? transactions : undefined} />
       case 'buffer':
-        return <BufferHeatmapView />
+        return <BufferHeatmapView buffers={buffers.length > 0 ? buffers : undefined} />
       case 'lock':
         return <LockGraphView />
       case 'memory':
@@ -56,14 +60,20 @@ function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-      <Header connected={connected} pgVersion={pgVersion} />
+      <Header connected={connected} pgVersion={pgVersion} wsConnected={wsConnected} />
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <Sidebar currentView={currentView} onNavigate={setCurrentView} />
         <main style={{ flex: 1, overflow: 'auto', padding: '0' }}>
           {renderView()}
         </main>
       </div>
-      <StatusBar connected={connected} />
+      <StatusBar
+        collectorMode={collectorMode}
+        connected={connected}
+        eventCount={eventCount}
+        lastEventType={lastEventType}
+        wsConnected={wsConnected}
+      />
     </div>
   )
 }

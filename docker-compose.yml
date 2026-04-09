@@ -43,7 +43,6 @@ services:
       PG_DATA_DIR: /var/lib/postgresql/data
     ports:
       - "3000:3000"
-      - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,10 +73,15 @@ services:
       dockerfile: Dockerfile
     container_name: pgv-collector
     environment:
-      BACKEND_WS_URL: ws://backend:8080
+      BACKEND_WS_URL: ws://127.0.0.1:3000/ws
       COLLECTOR_PORT: 8090
       PG_DATA_DIR: /var/lib/postgresql/data
+      USE_EBPF: "true"
+      BPF_OBJECT_PATH: /app/probes/probe.bpf.o
+      POSTGRES_BIN: /usr/local/bin/postgres
     network_mode: host
+    pid: host
+    privileged: true
     cap_add:
       - SYS_ADMIN
       - SYS_RESOURCE
@@ -87,6 +91,8 @@ services:
       - seccomp=unconfined
     volumes:
       - /lib/modules:/lib/modules:ro
+      - /sys/kernel/debug:/sys/kernel/debug
+      - /sys/fs/bpf:/sys/fs/bpf
       - pg_data:/var/lib/postgresql/data
     depends_on:
       - postgres

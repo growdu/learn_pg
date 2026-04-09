@@ -1,9 +1,10 @@
 interface HeaderProps {
   connected: boolean
   pgVersion: string
+  wsConnected: boolean
 }
 
-export default function Header({ connected, pgVersion }: HeaderProps) {
+export default function Header({ connected, pgVersion, wsConnected }: HeaderProps) {
   return (
     <header style={{
       display: 'flex',
@@ -31,6 +32,16 @@ export default function Header({ connected, pgVersion }: HeaderProps) {
         }} />
         <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>
           {connected ? '已连接' : '未连接'}
+        </span>
+        <span style={{
+          display: 'inline-block',
+          width: '8px',
+          height: '8px',
+          borderRadius: '50%',
+          background: wsConnected ? 'var(--accent)' : 'var(--text-muted)',
+        }} />
+        <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>
+          {wsConnected ? '事件流在线' : '事件流离线'}
         </span>
       </div>
     </header>

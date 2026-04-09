@@ -1,12 +1,5 @@
 import { create } from 'zustand'
-
-export interface ProbeEvent {
-  type: string
-  timestamp: number
-  pid: number
-  seq: number
-  data: Record<string, unknown>
-}
+import type { ProbeEvent } from '../types/events'
 
 interface EventStore {
   events: ProbeEvent[]

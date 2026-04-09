@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
+import type { ConnectResponse, ExecuteResponse } from '../../types/pg'
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000'
+const API_BASE = import.meta.env.VITE_API_URL || ''
 
 interface SQLConsoleProps {
   onConnect: (connected: boolean) => void
@@ -25,7 +26,7 @@ export default function SQLConsole({ onConnect, onVersion }: SQLConsoleProps) {
 
   useEffect(() => {
     // Auto-connect on mount
-    handleConnect()
+    void handleConnect()
   }, [])
 
   const handleConnect = async () => {
@@ -42,7 +43,7 @@ export default function SQLConsole({ onConnect, onVersion }: SQLConsoleProps) {
           database: config.database,
         }),
       })
-      const data = await res.json()
+      const data: ConnectResponse = await res.json()
       if (data.success) {
         setConnectedState(true)
         onConnect(true)
@@ -71,15 +72,15 @@ export default function SQLConsole({ onConnect, onVersion }: SQLConsoleProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sql: sql.trim() }),
       })
-      const data = await res.json()
+      const data: ExecuteResponse = await res.json()
       if (data.success && data.result) {
         const result = data.result
         let out = ''
         if (result.columns?.length) {
-          out += result.columns.map((c: { Name: string }) => c.Name).join('\t') + '\n'
+          out += result.columns.map((c) => c.name).join('\t') + '\n'
         }
         result.rows?.forEach((row: Record<string, string>) => {
-          out += result.columns.map((c: { Name: string }) => row[c.Name] || '').join('\t') + '\n'
+          out += result.columns.map((c) => row[c.name] || '').join('\t') + '\n'
         })
         if (result.commandTag) out += `(${result.commandTag})\n`
         setOutput(out || '(无结果)')
@@ -143,7 +144,10 @@ export default function SQLConsole({ onConnect, onVersion }: SQLConsoleProps) {
                 <input
                   type={key === 'password' ? 'password' : key === 'port' ? 'number' : 'text'}
                   value={config[key]}
-                  onChange={(e) => setConfig({ ...config, [key]: e.target.value })}
+                  onChange={(e) => setConfig({
+                    ...config,
+                    [key]: key === 'port' ? Number(e.target.value) : e.target.value,
+                  })}
                   style={{
                     width: '100%',
                     padding: '0.25rem 0.5rem',
