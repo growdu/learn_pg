@@ -77,7 +77,6 @@ docker compose logs -f backend
 | `PG_USER` | postgres | PostgreSQL 用户 |
 | `PG_PASSWORD` | postgres | PostgreSQL 密码 |
 | `API_PORT` | 3000 | Backend API 端口 |
-| `WS_PORT` | 8080 | WebSocket 端口 |
 | `ENABLE_EBPF` | true | 启用 eBPF 采集 |
 | `LOG_LEVEL` | info | 日志级别 |
 

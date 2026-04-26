@@ -2,6 +2,7 @@ import { useState } from 'react'
 import Header from './components/layout/Header'
 import Sidebar from './components/layout/Sidebar'
 import StatusBar from './components/layout/StatusBar'
+import ConnectionManager from './components/connection/ConnectionManager'
 import SQLConsole from './components/sql/SQLConsole'
 import WALViewer from './components/wal/WALViewer'
 import CLOGViewer from './components/clog/CLOGViewer'
@@ -46,14 +47,10 @@ function App() {
       case 'plan':
         return <PlanTreeView />
       default:
-        return (
-          <div style={{ padding: '2rem' }}>
-            <h1 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>PostgreSQL 内核可视化平台</h1>
-            <p style={{ color: 'var(--text-muted)', marginBottom: '2rem' }}>
-              PG Version: {pgVersion || '未连接'}
-            </p>
-            <SQLConsole onConnect={setConnected} onVersion={setPgVersion} />
-          </div>
+        return connected ? (
+          <SQLConsole />
+        ) : (
+          <ConnectionManager onConnect={setConnected} onVersion={setPgVersion} />
         )
     }
   }

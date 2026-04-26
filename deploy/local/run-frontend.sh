@@ -17,13 +17,12 @@ fi
 
 # Default values
 BACKEND_API_PORT="${BACKEND_API_PORT:-3000}"
-BACKEND_WS_PORT="${BACKEND_WS_PORT:-$BACKEND_API_PORT}"
 FRONTEND_PORT="${FRONTEND_PORT:-80}"
 
 echo "=== Starting frontend locally ==="
 echo "Frontend Port: $FRONTEND_PORT"
 echo "Backend API: $BACKEND_API_PORT"
-echo "Backend WebSocket: ws://localhost:$BACKEND_WS_PORT/ws"
+echo "Backend WebSocket: ws://localhost:$BACKEND_API_PORT/ws"
 
 # Build frontend if needed
 if [ ! -d "$PROJECT_ROOT/frontend/dist" ]; then

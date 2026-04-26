@@ -20,10 +20,11 @@ var upgrader = websocket.Upgrader{
 
 // Client represents a single WebSocket client connection
 type Client struct {
-	hub    *Hub
-	conn   *websocket.Conn
-	send   chan []byte
-	mu     sync.Mutex
+	hub      *Hub
+	conn     *websocket.Conn
+	send     chan []byte
+	mu       sync.Mutex
+	isSource bool // true = collector, false = frontend
 }
 
 // Hub maintains the set of active clients and broadcasts messages
@@ -109,9 +110,10 @@ func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &Client{
-		hub:  hub,
-		conn: conn,
-		send: make(chan []byte, 256),
+		hub:      hub,
+		conn:     conn,
+		send:     make(chan []byte, 256),
+		isSource: false,
 	}
 
 	hub.register <- client
@@ -183,7 +185,22 @@ func (c *Client) readPump() {
 			}
 			break
 		}
-		// Echo received messages back (for ping/pong testing)
-		c.hub.broadcast <- message
+
+		// Forward message to all OTHER connected clients.
+		// This works because:
+		//   - collector sends events → forwarded to all frontends
+		//   - frontend sends messages → forwarded to collector + other frontends
+		//   - echo-back from collector is harmless
+		c.hub.mu.RLock()
+		for client := range c.hub.clients {
+			if client != c {
+				select {
+				case client.send <- message:
+				default:
+					// slow client, drop
+				}
+			}
+		}
+		c.hub.mu.RUnlock()
 	}
 }

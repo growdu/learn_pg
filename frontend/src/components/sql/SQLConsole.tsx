@@ -1,66 +1,41 @@
-import { useState, useRef, useEffect } from 'react'
-import type { ConnectResponse, ExecuteResponse } from '../../types/pg'
+import { useState, useRef } from 'react'
+import type { ExecuteResponse } from '../../types/pg'
+import { usePGStore } from '../../stores/pgStore'
+
+// Normalize backend PascalCase fields to camelCase
+function normalizeResponse(raw: ExecuteResponse): ExecuteResponse {
+  const r = raw.result as unknown as Record<string, unknown>
+  if (!r) return raw
+  const cols = r.Columns as unknown[] | undefined
+  const rows = r.Rows as unknown[] | undefined
+  return {
+    success: raw.success,
+    error: raw.error,
+    result: {
+      columns: (cols ?? []).map((c: unknown) => {
+        const col = c as Record<string, unknown>
+        return { name: String(col.Name ?? ''), type: Number(col.Type ?? 0) }
+      }),
+      rows: (rows ?? []) as Record<string, string>[],
+      commandTag: String(r.CommandTag ?? ''),
+      error: r.Error as string | undefined,
+      errorDetail: r.ErrorDetail as Record<string, string> | undefined,
+    },
+  }
+}
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 
-interface SQLConsoleProps {
-  onConnect: (connected: boolean) => void
-  onVersion: (version: string) => void
-}
+interface SQLConsoleProps {}
 
-export default function SQLConsole({ onConnect, onVersion }: SQLConsoleProps) {
+export default function SQLConsole(_props: SQLConsoleProps) {
+  // Global store — persists across page navigations
+  const { connected, config } = usePGStore()
+
   const [sql, setSql] = useState('SELECT 1;')
   const [output, setOutput] = useState('')
   const [loading, setLoading] = useState(false)
-  const [connected, setConnectedState] = useState(false)
-  const [connecting, setConnecting] = useState(false)
-  const [config, setConfig] = useState({
-    host: 'localhost',
-    port: 5432,
-    user: 'postgres',
-    password: 'postgres',
-    database: 'postgres',
-  })
-  const [showConfig, setShowConfig] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-
-  useEffect(() => {
-    // Auto-connect on mount
-    void handleConnect()
-  }, [])
-
-  const handleConnect = async () => {
-    setConnecting(true)
-    try {
-      const res = await fetch(`${API_BASE}/api/connect`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          host: config.host,
-          port: config.port,
-          user: config.user,
-          password: config.password,
-          database: config.database,
-        }),
-      })
-      const data: ConnectResponse = await res.json()
-      if (data.success) {
-        setConnectedState(true)
-        onConnect(true)
-        if (data.version) {
-          onVersion(data.version)
-        }
-        setOutput(`[连接成功] ${data.version || ''}\n`)
-      } else {
-        setOutput(`[连接失败] ${data.message}\n`)
-        onConnect(false)
-      }
-    } catch {
-      setOutput(`[连接失败] 无法连接到 ${config.host}:${config.port}\n`)
-      onConnect(false)
-    }
-    setConnecting(false)
-  }
 
   const handleExecute = async () => {
     if (!sql.trim()) return
@@ -73,8 +48,9 @@ export default function SQLConsole({ onConnect, onVersion }: SQLConsoleProps) {
         body: JSON.stringify({ sql: sql.trim() }),
       })
       const data: ExecuteResponse = await res.json()
-      if (data.success && data.result) {
-        const result = data.result
+      const norm = normalizeResponse(data)
+      if (norm.success && norm.result) {
+        const result = norm.result
         let out = ''
         if (result.columns?.length) {
           out += result.columns.map((c) => c.name).join('\t') + '\n'
@@ -85,7 +61,7 @@ export default function SQLConsole({ onConnect, onVersion }: SQLConsoleProps) {
         if (result.commandTag) out += `(${result.commandTag})\n`
         setOutput(out || '(无结果)')
       } else {
-        setOutput(`ERROR: ${data.error || '未知错误'}\n`)
+        setOutput(`ERROR: ${norm.error || '未知错误'}\n`)
       }
     } catch (e) {
       setOutput(`ERROR: 请求失败 - ${e}\n`)
@@ -95,73 +71,16 @@ export default function SQLConsole({ onConnect, onVersion }: SQLConsoleProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-      {/* Connection Config */}
+      {/* Connection status banner */}
       <div style={{
-        padding: '1rem',
-        background: 'var(--bg-secondary)',
-        borderRadius: '8px',
-        border: '1px solid var(--border)',
+        padding: '0.5rem 1rem',
+        background: 'var(--green)',
+        color: 'white',
+        borderRadius: '6px',
+        fontSize: '0.8rem',
+        fontFamily: 'Consolas, monospace',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: showConfig ? '1rem' : 0 }}>
-          <span style={{ color: 'var(--text-muted)', fontSize: '0.875rem' }}>
-            连接: {config.host}:{config.port}/{config.database}
-          </span>
-          <button
-            onClick={() => setShowConfig(!showConfig)}
-            style={{
-              padding: '0.25rem 0.75rem',
-              background: 'var(--bg-tertiary)',
-              color: 'var(--text)',
-              border: '1px solid var(--border)',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '0.75rem',
-            }}
-          >
-            {showConfig ? '收起' : '配置'}
-          </button>
-          <button
-            onClick={handleConnect}
-            disabled={connecting}
-            style={{
-              padding: '0.25rem 0.75rem',
-              background: connected ? 'var(--green)' : 'var(--accent)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '0.75rem',
-            }}
-          >
-            {connecting ? '连接中...' : (connected ? '重连' : '连接')}
-          </button>
-        </div>
-        {showConfig && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem' }}>
-            {(['host', 'port', 'user', 'password', 'database'] as const).map((key) => (
-              <div key={key}>
-                <label style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{key}</label>
-                <input
-                  type={key === 'password' ? 'password' : key === 'port' ? 'number' : 'text'}
-                  value={config[key]}
-                  onChange={(e) => setConfig({
-                    ...config,
-                    [key]: key === 'port' ? Number(e.target.value) : e.target.value,
-                  })}
-                  style={{
-                    width: '100%',
-                    padding: '0.25rem 0.5rem',
-                    background: 'var(--bg)',
-                    color: 'var(--text)',
-                    border: '1px solid var(--border)',
-                    borderRadius: '4px',
-                    fontSize: '0.875rem',
-                  }}
-                />
-              </div>
-            ))}
-          </div>
-        )}
+        Connected: {config.host}:{config.port}/{config.database}
       </div>
 
       {/* SQL Input */}

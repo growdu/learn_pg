@@ -11,7 +11,6 @@ services:
       PG_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       PG_DATABASE: ${POSTGRES_DB:-postgres}
       API_PORT: ${BACKEND_API_PORT:-3000}
-      WS_PORT: ${BACKEND_WS_PORT:-8080}
       COLLECTOR_WS_URL: "ws://${COLLECTOR_HOST:-collector}:${COLLECTOR_PORT:-8090}"
       PG_DATA_DIR: ${PG_DATA_DIR:-/var/lib/postgresql/data}
       # External configuration
@@ -19,7 +18,8 @@ services:
       APP_EXTERNAL_HOST: ${APP_EXTERNAL_HOST:-localhost}
     ports:
       - "${BACKEND_API_PORT:-3000}:${BACKEND_API_PORT:-3000}"
-      - "${BACKEND_WS_PORT:-8080}:${BACKEND_WS_PORT:-8080}"
+    volumes:
+      - ${PG_DATA_VOLUME:-pg_data}:/var/lib/postgresql:ro
     depends_on:
       postgres:
         condition: service_healthy

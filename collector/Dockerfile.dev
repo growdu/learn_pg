@@ -1,21 +1,27 @@
-FROM rust:1.75-alpine
+FROM docker.m.daocloud.io/library/debian:bookworm-slim
 
-RUN apk add --no-cache clang llvm lld elfutils-dev libelf-dev libbpf-dev linux-headers openssl-dev
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    clang llvm lld libelf-dev libbpf-dev linux-libc-dev libc6-dev \
+    libssl-dev pkg-config wget ca-certificates curl && rm -rf /var/lib/apt/lists/*
+
+RUN wget -qO- https://sh.rustup.rs | sh /dev/stdin -y --default-toolchain 1.75.0
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 WORKDIR /app
 
-COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs
+COPY collector/Cargo.toml collector/Cargo.lock ./
+RUN mkdir src && printf 'fn main() {}\n' > src/main.rs
 RUN cargo build --release 2>/dev/null || true
 
-COPY . .
+COPY collector/ .
 RUN rm -rf src/main.rs
 RUN ./build-ebpf.sh
 
 RUN cargo build --release
 
-FROM alpine:3.19
-RUN apk add --no-cache libelf
+FROM docker.m.daocloud.io/library/debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libelf1 libssl3 ca-certificates && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=0 /app/target/release/pg-collector /app/collector

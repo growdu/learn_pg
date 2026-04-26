@@ -11,6 +11,7 @@ import (
 
 	"pg-visualizer-backend/internal/api"
 	"pg-visualizer-backend/internal/config"
+	"pg-visualizer-backend/internal/pg"
 	"pg-visualizer-backend/internal/ws"
 )
 
@@ -35,8 +36,8 @@ func main() {
 	cfg := config.Load()
 
 	log.Printf("[MAIN] PG Kernel Visualizer Backend")
-	log.Printf("[MAIN] Config: PG=%s:%d, API=%d, WS=%d",
-		cfg.PGHost, cfg.PGPort, cfg.APIPort, cfg.WSPort)
+	log.Printf("[MAIN] Config: PG=%s:%d, API=%d",
+		cfg.PGHost, cfg.PGPort, cfg.APIPort)
 
 	// Create WebSocket hub
 	hub := ws.NewHub()
@@ -45,6 +46,19 @@ func main() {
 
 	// Create API handler
 	handler := api.NewHandler(cfg, hub)
+
+	// Auto-connect to PostgreSQL on startup
+	if cfg.PGHost != "" {
+		client := pg.NewClient()
+		if err := client.Connect(cfg.PGHost, cfg.PGPort, cfg.PGUser, cfg.PGPassword, cfg.PGDatabase); err != nil {
+			log.Printf("[MAIN] WARNING: auto-connect to PG failed: %v (use /api/connect to connect later)", err)
+		} else {
+			handler.SetPGClient(client)
+			if v, err := client.GetVersion(); err == nil {
+				log.Printf("[MAIN] PostgreSQL connected: %s", v)
+			}
+		}
+	}
 
 	// Setup HTTP router
 	mux := http.NewServeMux()

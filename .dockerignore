@@ -1,50 +1,8 @@
-# Git
-.git/
-.gitignore
+# Ignore everything
+*
 
-# Node modules
-node_modules/
-frontend/node_modules/
-
-# Build outputs
-dist/
-dist-ssr/
-frontend/dist/
-*.local
-
-# Go build
-backend/tmp/
-backend/bin/
-backend/*.exe
-
-# Rust
-collector/target/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Environment
-.env
-.env.local
-.env.*.local
-
-# Logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# Test
-coverage/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Docs
-docs/*.md
-!docs/README.md
+# Allow only what's needed for collector image
+!collector/target/release/pg-collector
+!collector/probes/probe.bpf.o
+!collector/Dockerfile.local
+!Dockerfile

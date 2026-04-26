@@ -2,16 +2,19 @@ import { startTransition, useCallback, useEffect, useRef, useState } from 'react
 import { useEventStore } from '../stores/eventStore'
 import type { ProbeEvent } from '../types/events'
 
-function getDefaultWsUrl() {
+// In Docker: VITE_WS_URL=ws://localhost/ws/ so we can't rely on it.
+// Always use relative URL that goes through the reverse proxy.
+function buildWsUrl() {
   if (typeof window === 'undefined') {
     return 'ws://localhost:3000/ws'
   }
-
   const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
   return `${protocol}://${window.location.host}/ws`
 }
 
-const WS_URL = import.meta.env.VITE_WS_URL || getDefaultWsUrl()
+// In Docker, VITE_WS_URL=ws://localhost/ws/ is wrong for reverse-proxy deployments.
+// The only reliable approach is to always derive from window.location.
+const WS_URL = buildWsUrl()
 
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null)

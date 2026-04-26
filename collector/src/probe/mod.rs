@@ -122,6 +122,7 @@ pub enum XactState {
 }
 
 impl XactState {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             XactState::Begin => "begin",
@@ -146,6 +147,7 @@ pub enum LockMode {
 }
 
 impl LockMode {
+    #[allow(dead_code)]
     pub fn name(&self) -> &'static str {
         match self {
             LockMode::NoLock => "NoLock",
@@ -186,8 +188,11 @@ pub struct WalInsertEvent {
     pub rel_oid: Option<u32>,
     /// Parsed WAL block references.
     pub blocks: Vec<WalBlockRef>,
-    /// Event source: wal-file or ebpf-uprobe.
+    /// Event source: wal-file, ebpf-uprobe, ebpf:heap_insert, etc.
     pub source: String,
+    /// Number of block references in the WAL record.
+    /// 0 = unknown; 1 = insert; 2 = update (old+new); 3+ = multi-block (BRIN, etc.)
+    pub block_count: u8,
 }
 
 /// Buffer Pin/Unpin event data
@@ -237,6 +242,7 @@ pub struct ProbeTarget {
 }
 
 /// All defined probe targets for PostgreSQL kernel events
+#[allow(dead_code)]
 pub const PROBE_TARGETS: &[(&str, ProbeTarget)] = &[
     // WAL Insert probes
     (
@@ -345,23 +351,6 @@ impl Default for ProbeStatus {
     }
 }
 
-/// Collects all probe statuses
-pub fn all_probe_status() -> Vec<ProbeStatus> {
-    probe_statuses(false)
-}
-
-pub fn probe_statuses(enabled: bool) -> Vec<ProbeStatus> {
-    PROBE_TARGETS
-        .iter()
-        .map(|(name, _)| ProbeStatus {
-            name: name.to_string(),
-            enabled,
-            hit_count: 0,
-            error_count: 0,
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -417,6 +406,7 @@ mod tests {
                 ..WalBlockRef::default()
             }],
             source: "wal-file".to_string(),
+            block_count: 1,
         };
 
         assert_eq!(event.rmgr_id, 2);
@@ -454,11 +444,4 @@ mod tests {
         assert_eq!(event.state, "commit");
     }
 
-    #[test]
-    fn test_all_probe_status() {
-        let statuses = all_probe_status();
-        assert_eq!(statuses.len(), 9); // 9 probe targets defined
-        assert_eq!(statuses[0].name, "xlog_insert");
-        assert!(!statuses[0].enabled);
-    }
 }

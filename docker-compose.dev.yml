@@ -10,6 +10,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
       POSTGRES_HOST_AUTH_METHOD: trust
+      PGDATA: /var/lib/postgresql/data
     ports:
       - "5433:5432"
     volumes:
@@ -41,10 +42,12 @@ services:
       PG_PASSWORD: postgres
       PG_DATABASE: postgres
       API_PORT: 3010
-      WS_PORT: 3010
       COLLECTOR_WS_URL: ws://collector:8090
+      PG_DATA_DIR: /var/lib/postgresql/data
     ports:
       - "3010:3010"
+    volumes:
+      - pg_data:/var/lib/postgresql
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,7 +64,7 @@ services:
       dockerfile: Dockerfile.dev
     container_name: pgv-collector
     environment:
-      BACKEND_WS_URL: ws://127.0.0.1:3010/ws
+      BACKEND_WS_URL: ws://backend:3010/ws
       COLLECTOR_PORT: 8090
       PG_DATA_DIR: /var/lib/postgresql/data
       USE_EBPF: "true"
@@ -76,7 +79,7 @@ services:
       - NET_RAW
       - NET_BIND_SERVICE
     security_opt:
-      - seccomp=unconfined
+      - seccomp:unconfined
     volumes:
       - /lib/modules:/lib/modules:ro
       - /sys/kernel/debug:/sys/kernel/debug
@@ -107,5 +110,4 @@ volumes:
   pg_data:
 
 networks:
-  default:
-    name: pgv-net
+  pgv-net:

@@ -203,6 +203,7 @@ type CLOGResponse struct {
 
 // ServeExecute handles POST /api/execute
 func (h *Handler) ServeExecute(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[API] ServeExecute called method=%s", r.Method)
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
