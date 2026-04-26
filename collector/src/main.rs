@@ -185,7 +185,7 @@ async fn main() -> Result<()> {
     let ws_url = config.backend_ws_url.clone();
     tokio::spawn(ws_sender(rx, ws_url, shutdown_rx.resubscribe()));
 
-    // WAL file polling fallback — only sends wal_insert events, no heartbeat
+    // WAL file polling fallback — sends wal_insert events + heartbeat
     let tx_clone = tx;
     let poll_interval_ms = config.poll_interval_ms;
     let pg_data_dir = config.pg_data_dir.clone();
@@ -199,6 +199,19 @@ async fn main() -> Result<()> {
                     for event in wal_file::collect_new_wal_events(&pg_data_dir, &mut seen_lsns, 256) {
                         let _ = tx_clone.send(wal_to_event(event)).await;
                     }
+                    // Heartbeat so the frontend always knows collector status
+                    let evt = WsEvent {
+                        event_type: "heartbeat".to_string(),
+                        timestamp: now_micros(),
+                        pid: std::process::id(),
+                        seq: next_seq(),
+                        data: serde_json::json!({
+                            "mode": "wal-file",
+                            "source": "wal-file-collector",
+                            "wal_events_seen": seen_lsns.len(),
+                        }),
+                    };
+                    let _ = tx_clone.send(evt).await;
                 }
             }
         }

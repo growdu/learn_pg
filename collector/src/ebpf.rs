@@ -238,6 +238,7 @@ pub fn spawn_ebpf_collector(
                         pid: std::process::id(),
                         seq: next_seq(),
                         data: serde_json::json!({
+                            "mode": "ebpf-uprobe",
                             "source": "ebpf-collector",
                             "probes": probes,
                         }),
