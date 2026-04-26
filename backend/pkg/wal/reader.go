@@ -14,7 +14,7 @@ const PageSize = 8192
 
 const (
 	XLogPageHeaderSize     = 20
-	XLogLongPageHeaderSize = 36
+	XLogLongPageHeaderSize = 28 // PG 18: XLogPageHeaderData(20) + xlp_magic(2) + xlp_info(2) + xlp_tli(2) + xlp_struct_size(2)
 	XLogRecordHeaderSize   = 24
 	WALRecordAlign         = 8
 )
@@ -123,9 +123,18 @@ func (w *WALReader) ReadRecords(segmentFile string, startOffset, limit int) ([]R
 			break
 		}
 
-		pageAddr := readLE64(page[8:16])
-		remLen := int(readLE32(page[16:20]))
+		// PG 18: WAL page address (WAL pointer) is big-endian at offset 8 (64-bit).
+		// This gives us the LSN base for all records on this page.
+		pageAddr := readBE64(page[8:16])
+		// PG 18: page_len at offset 16 (big-endian) tells us how many bytes
+		// of valid WAL data this page contains. 0 = page not yet written.
+		pageLen := readBE32(page[16:20])
 		offset := headerSize
+
+		if pageLen == 0 {
+			// Page not yet written, skip to next page
+			continue
+		}
 
 		if len(pending) > 0 {
 			available := PageSize - headerSize
@@ -147,11 +156,10 @@ func (w *WALReader) ReadRecords(segmentFile string, startOffset, limit int) ([]R
 			} else {
 				continue
 			}
-		} else if pageStart > 0 && remLen > 0 {
-			if remLen >= PageSize-headerSize {
-				continue
-			}
-			offset += remLen
+		} else if pageStart > 0 {
+			// Non-first page: data starts immediately after standard 20-byte header.
+			// No rem_len field in PG 18 standard page header.
+			offset = headerSize
 		}
 
 		for offset+XLogRecordHeaderSize <= PageSize {
@@ -386,6 +394,7 @@ func alignRecordLength(length int) int {
 	return (length + WALRecordAlign - 1) &^ (WALRecordAlign - 1)
 }
 
+// readLE32 reads a little-endian uint32
 func readLE32(b []byte) uint32 {
 	return uint32(b[0]) |
 		uint32(b[1])<<8 |
@@ -393,6 +402,27 @@ func readLE32(b []byte) uint32 {
 		uint32(b[3])<<24
 }
 
+// readBE32 reads a big-endian uint32 (used for WAL page header fields in PG 18)
+func readBE32(b []byte) uint32 {
+	return uint32(b[0])<<24 |
+		uint32(b[1])<<16 |
+		uint32(b[2])<<8 |
+		uint32(b[3])
+}
+
+// readBE64 reads a big-endian uint64 (used for WAL page address in PG 18)
+func readBE64(b []byte) uint64 {
+	return uint64(b[0])<<56 |
+		uint64(b[1])<<48 |
+		uint64(b[2])<<40 |
+		uint64(b[3])<<32 |
+		uint64(b[4])<<24 |
+		uint64(b[5])<<16 |
+		uint64(b[6])<<8 |
+		uint64(b[7])
+}
+
+// readLE64 reads a little-endian uint64
 func readLE64(b []byte) uint64 {
 	return uint64(readLE32(b[:4])) | uint64(readLE32(b[4:8]))<<32
 }

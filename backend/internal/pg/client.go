@@ -14,6 +14,11 @@ type Client struct {
 	conn *sql.DB
 }
 
+// NewClient creates a new PostgreSQL client
+func NewClient() *Client {
+	return &Client{}
+}
+
 // Connect establishes connection to PostgreSQL
 func (c *Client) Connect(host string, port int, user, password, database string) error {
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
@@ -234,17 +239,17 @@ func (c *Client) GetCurrentXid() (uint64, error) {
 
 // ExecuteResult holds the result of a query execution
 type ExecuteResult struct {
-	Columns     []Column            `json:"columns"`
-	Rows        []map[string]string `json:"rows"`
-	CommandTag  string              `json:"commandTag"`
-	Error       string              `json:"error,omitempty"`
-	ErrorDetail map[string]string   `json:"errorDetail,omitempty"`
+	Columns     []Column            `json:"Columns"`
+	Rows        []map[string]string `json:"Rows"`
+	CommandTag  string              `json:"CommandTag"`
+	Error       string              `json:"Error,omitempty"`
+	ErrorDetail map[string]string   `json:"ErrorDetail,omitempty"`
 }
 
 // Column describes a result column
 type Column struct {
-	Name string `json:"name"`
-	Type uint32 `json:"type"`
+	Name string `json:"Name"`
+	Type uint32 `json:"Type"`
 }
 
 // GetSQLResult returns a human-readable string

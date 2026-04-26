@@ -13,7 +13,6 @@ func TestLoadDefaults(t *testing.T) {
 	os.Unsetenv("PG_DATABASE")
 	os.Unsetenv("PG_DATA_DIR")
 	os.Unsetenv("API_PORT")
-	os.Unsetenv("WS_PORT")
 	os.Unsetenv("COLLECTOR_WS_URL")
 	os.Unsetenv("ENABLE_EBPF")
 	os.Unsetenv("LOG_LEVEL")
@@ -41,9 +40,6 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.APIPort != 3000 {
 		t.Errorf("expected APIPort 3000, got %d", cfg.APIPort)
 	}
-	if cfg.WSPort != 8080 {
-		t.Errorf("expected WSPort 8080, got %d", cfg.WSPort)
-	}
 	if cfg.CollectorWSURL != "ws://localhost:8090" {
 		t.Errorf("expected CollectorWSURL 'ws://localhost:8090', got '%s'", cfg.CollectorWSURL)
 	}
@@ -63,7 +59,6 @@ func TestLoadFromEnv(t *testing.T) {
 	os.Setenv("PG_DATABASE", "mydb")
 	os.Setenv("PG_DATA_DIR", "/custom/data")
 	os.Setenv("API_PORT", "4000")
-	os.Setenv("WS_PORT", "9090")
 	os.Setenv("COLLECTOR_WS_URL", "ws://custom:9999")
 	os.Setenv("ENABLE_EBPF", "false")
 	os.Setenv("LOG_LEVEL", "debug")
@@ -75,7 +70,6 @@ func TestLoadFromEnv(t *testing.T) {
 		os.Unsetenv("PG_DATABASE")
 		os.Unsetenv("PG_DATA_DIR")
 		os.Unsetenv("API_PORT")
-		os.Unsetenv("WS_PORT")
 		os.Unsetenv("COLLECTOR_WS_URL")
 		os.Unsetenv("ENABLE_EBPF")
 		os.Unsetenv("LOG_LEVEL")
@@ -103,9 +97,6 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 	if cfg.APIPort != 4000 {
 		t.Errorf("expected APIPort 4000, got %d", cfg.APIPort)
-	}
-	if cfg.WSPort != 9090 {
-		t.Errorf("expected WSPort 9090, got %d", cfg.WSPort)
 	}
 	if cfg.CollectorWSURL != "ws://custom:9999" {
 		t.Errorf("expected CollectorWSURL 'ws://custom:9999', got '%s'", cfg.CollectorWSURL)

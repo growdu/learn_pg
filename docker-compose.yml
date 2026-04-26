@@ -9,6 +9,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
       POSTGRES_HOST_AUTH_METHOD: trust
+      PGDATA: /var/lib/postgresql/data
     command:
       - "postgres"
       - "-cshared_buffers=256MB"
@@ -19,12 +20,14 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      - pg_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - pgv-net
 
   backend:
     build:
@@ -38,14 +41,15 @@ services:
       PG_PASSWORD: postgres
       PG_DATABASE: postgres
       API_PORT: 3000
-      WS_PORT: 8080
       COLLECTOR_WS_URL: ws://collector:8090
       PG_DATA_DIR: /var/lib/postgresql/data
-    ports:
-      - "3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - pg_data:/var/lib/postgresql:ro
+    networks:
+      - pgv-net
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/health"]
       interval: 10s
@@ -61,8 +65,10 @@ services:
       - "80:80"
     depends_on:
       - backend
+    networks:
+      - pgv-net
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1/"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -73,7 +79,7 @@ services:
       dockerfile: Dockerfile
     container_name: pgv-collector
     environment:
-      BACKEND_WS_URL: ws://127.0.0.1:3000/ws
+      BACKEND_WS_URL: ws://backend:3000/ws
       COLLECTOR_PORT: 8090
       PG_DATA_DIR: /var/lib/postgresql/data
       USE_EBPF: "true"
@@ -88,12 +94,12 @@ services:
       - NET_RAW
       - NET_BIND_SERVICE
     security_opt:
-      - seccomp=unconfined
+      - seccomp:unconfined
     volumes:
       - /lib/modules:/lib/modules:ro
       - /sys/kernel/debug:/sys/kernel/debug
       - /sys/fs/bpf:/sys/fs/bpf
-      - pg_data:/var/lib/postgresql/data
+      - pg_data:/var/lib/postgresql
     depends_on:
       - postgres
     profiles:
@@ -103,5 +109,4 @@ volumes:
   pg_data:
 
 networks:
-  default:
-    name: pgv-net
+  pgv-net:

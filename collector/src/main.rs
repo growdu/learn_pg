@@ -160,19 +160,14 @@ async fn main() -> Result<()> {
     let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
 
     #[cfg(target_os = "linux")]
-    let mut ebpf_active = false;
-    #[cfg(not(target_os = "linux"))]
-    let ebpf_active = false;
-    #[cfg(target_os = "linux")]
     if config.use_ebpf {
         let ebpf_config = ebpf::EbpfConfig {
             object_path: config.bpf_object_path.clone(),
             postgres_bin: config.postgres_bin.clone(),
             postgres_pid: config.postgres_pid,
         };
-        match ebpf::spawn_ebpf_collector(ebpf_config, tx.clone(), shutdown_rx.resubscribe()) {
+        match ebpf::spawn_ebpf_collector(ebpf_config, tx.clone(), shutdown_rx.resubscribe(), config.poll_interval_ms) {
             Ok(()) => {
-                ebpf_active = true;
                 tracing::info!("eBPF uprobes active");
             }
             Err(e) => {
@@ -190,12 +185,10 @@ async fn main() -> Result<()> {
     let ws_url = config.backend_ws_url.clone();
     tokio::spawn(ws_sender(rx, ws_url, shutdown_rx.resubscribe()));
 
-    // Spawn event generator
+    // WAL file polling fallback — only sends wal_insert events, no heartbeat
     let tx_clone = tx;
     let poll_interval_ms = config.poll_interval_ms;
     let pg_data_dir = config.pg_data_dir.clone();
-    let ebpf_requested = config.use_ebpf;
-    let ebpf_enabled = ebpf_active;
     tokio::spawn(async move {
         let mut ticker = interval(Duration::from_millis(poll_interval_ms));
         let mut seen_lsns = HashSet::new();
@@ -206,21 +199,6 @@ async fn main() -> Result<()> {
                     for event in wal_file::collect_new_wal_events(&pg_data_dir, &mut seen_lsns, 256) {
                         let _ = tx_clone.send(wal_to_event(event)).await;
                     }
-
-                    let evt = WsEvent {
-                        event_type: "heartbeat".to_string(),
-                        timestamp: now_micros(),
-                        pid: std::process::id(),
-                        seq: next_seq(),
-                        data: serde_json::json!({
-                            "mode": if ebpf_enabled { "ebpf-uprobe+wal-file" } else if ebpf_requested { "ebpf-requested/wal-file-active" } else { "wal-file" },
-                            "probes": probe::probe_statuses(ebpf_enabled),
-                            "note": "collector active",
-                            "wal_events_seen": seen_lsns.len(),
-                            "pg_data_dir": pg_data_dir.clone()
-                        }),
-                    };
-                    let _ = tx_clone.send(evt).await;
                 }
             }
         }

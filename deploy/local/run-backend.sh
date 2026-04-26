@@ -22,13 +22,12 @@ POSTGRES_USER="${POSTGRES_USER:-postgres}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-postgres}"
 POSTGRES_DB="${POSTGRES_DB:-postgres}"
 BACKEND_API_PORT="${BACKEND_API_PORT:-3000}"
-BACKEND_WS_PORT="${BACKEND_WS_PORT:-$BACKEND_API_PORT}"
 COLLECTOR_WS_URL="${COLLECTOR_WS_URL:-ws://localhost:8090}"
 PG_DATA_DIR="${PG_DATA_DIR:-/var/lib/postgresql/data}"
 
 echo "=== Starting backend locally ==="
 echo "API Port: $BACKEND_API_PORT"
-echo "WebSocket Path: ws://localhost:$BACKEND_WS_PORT/ws"
+echo "WebSocket Path: ws://localhost:$BACKEND_API_PORT/ws"
 echo "PostgreSQL: $POSTGRES_HOST:$POSTGRES_PORT"
 
 # Build backend if needed
@@ -46,7 +45,6 @@ export PG_USER="$POSTGRES_USER"
 export PG_PASSWORD="$POSTGRES_PASSWORD"
 export PG_DATABASE="$POSTGRES_DB"
 export API_PORT="$BACKEND_API_PORT"
-export WS_PORT="$BACKEND_WS_PORT"
 export COLLECTOR_WS_URL="$COLLECTOR_WS_URL"
 export PG_DATA_DIR="$PG_DATA_DIR"
 

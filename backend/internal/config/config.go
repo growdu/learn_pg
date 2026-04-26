@@ -17,7 +17,6 @@ type Config struct {
 
 	// Backend
 	APIPort int
-	WSPort  int
 
 	// Collector
 	CollectorWSURL string
@@ -37,7 +36,6 @@ func Load() *Config {
 		PGDatabase:      getEnv("PG_DATABASE", "postgres"),
 		PGDataDir:       getEnv("PG_DATA_DIR", "/var/lib/postgresql/data"),
 		APIPort:         getEnvInt("API_PORT", 3000),
-		WSPort:          getEnvInt("WS_PORT", 8080),
 		CollectorWSURL:  getEnv("COLLECTOR_WS_URL", "ws://localhost:8090"),
 		EnableEBPF:      getEnvBool("ENABLE_EBPF", true),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),

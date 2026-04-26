@@ -1180,12 +1180,10 @@ services:
       PG_USER: postgres
       PG_PASSWORD: postgres
       PG_DATABASE: postgres
-      WS_PORT: 8080
       API_PORT: 3000
       COLLECTOR_WS_URL: ws://collector:8090
     ports:
-      - "3000:3000"              # HTTP API
-      - "8080:8080"              # WebSocket
+      - "3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -1410,9 +1408,8 @@ ENTRYPOINT ["pg-visualizer"]
 | `PG_PASSWORD` | 连接密码 | `postgres` |
 | `PG_DATABASE` | 默认数据库 | `postgres` |
 | `API_PORT` | 后端 HTTP 端口 | `3000` |
-| `WS_PORT` | WebSocket 端口 | `8080` |
 | `COLLECTOR_PORT` | 采集器 WS 端口 | `8090` |
-| `BACKEND_WS_URL` | 采集器连接后端 WS URL | `ws://backend:8080` |
+| `BACKEND_WS_URL` | 采集器连接后端 WS URL | `ws://backend:3000` |
 | `ENABLE_EBPF` | 是否启用 eBPF | `true` (仅 Linux) |
 | `LOG_LEVEL` | 日志级别 | `info` |
 

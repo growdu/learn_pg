@@ -113,12 +113,11 @@ PG_DATA_DIR=/var/lib/postgresql/data
 
 # Backend
 API_PORT=3000
-WS_PORT=8080
 LOG_LEVEL=warn
 
 # Collector
 ENABLE_EBPF=true
-BACKEND_WS_URL=ws://backend:8080
+BACKEND_WS_URL=ws://backend:3000
 EOF
 ```
 

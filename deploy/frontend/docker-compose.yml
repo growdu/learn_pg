@@ -7,7 +7,7 @@ services:
     environment:
       # Backend service URL (internal network)
       BACKEND_API_URL: http://${BACKEND_HOST:-backend}:${BACKEND_API_PORT:-3000}
-      BACKEND_WS_URL: ws://${BACKEND_HOST:-backend}:${BACKEND_WS_PORT:-8080}
+      BACKEND_WS_URL: ws://${BACKEND_HOST:-backend}:${BACKEND_API_PORT:-3000}/ws
     ports:
       - "${FRONTEND_PORT:-80}:80"
     depends_on:

@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM docker.m.daocloud.io/library/golang:1.21-alpine AS builder
 
 # Use Chinese Go proxy
 ENV GOPROXY=https://goproxy.cn,direct
@@ -11,17 +11,17 @@ RUN apk add --no-cache ca-certificates git
 WORKDIR /app
 
 # Copy go mod files first for better caching
-COPY backend/go.mod backend/go.sum ./
+COPY go.mod go.sum ./
 RUN go mod download
 
 # Copy source code
-COPY backend/ .
+COPY . .
 
 # Build
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o server ./cmd/server
 
 # Production stage
-FROM alpine:latest
+FROM docker.m.daocloud.io/library/alpine:latest
 
 RUN apk add --no-cache ca-certificates wget
 

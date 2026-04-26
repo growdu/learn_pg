@@ -163,6 +163,7 @@ pub fn parse_record_bytes(raw: &[u8], lsn_value: u64, source: &str) -> WalInsert
         rel_oid: first_block.and_then(|block| block.rel_node),
         blocks,
         source: source.to_string(),
+        block_count: 0, // wal-file parser computes full block info from raw WAL; field unused
     }
 }
 
