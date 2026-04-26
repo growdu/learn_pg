@@ -64,3 +64,13 @@ export interface LockWaitEvent extends ProbeEvent {
     wait_time_us: number
   }
 }
+
+export interface LockEvent extends ProbeEvent {
+  type: 'lock'
+  data: {
+    xid: number
+    mode: string
+    granted: boolean
+    locktag: string
+  }
+}
