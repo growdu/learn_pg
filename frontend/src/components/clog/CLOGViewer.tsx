@@ -20,10 +20,13 @@ export default function CLOGViewer() {
   const [, setLoading] = useState(false)
   const [transactions, setTransactions] = useState<{ xid: number; status: string }[]>([])
 
+  const [refreshKey] = useState(0)
+
   useEffect(() => {
-    // Try to fetch CLOG stats when connected
     fetchCLOGStats()
-  }, [])
+    const interval = setInterval(fetchCLOGStats, 5000)
+    return () => clearInterval(interval)
+  }, [refreshKey])
 
   const fetchCLOGStats = async () => {
     setLoading(true)

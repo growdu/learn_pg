@@ -31,7 +31,7 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 # Nginx configuration
 # Key: proxy_pass without trailing slash so nginx passes full path to backend
 # Backend has: GET /health, POST /api/execute, WS /ws
-# Frontend uses: /api/health, /api/execute, /api/connections, /ws/
+# Frontend uses: /api/health, /api/execute, /api/connections, /ws (with or without trailing slash)
 RUN printf '%s\n' \
     'server {' \
     '    listen 80;' \
@@ -46,6 +46,17 @@ RUN printf '%s\n' \
     '        proxy_set_header X-Real-IP $remote_addr;' \
     '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;' \
     '        proxy_set_header X-Forwarded-Proto $scheme;' \
+    '    }' \
+    '    location /ws/ {' \
+    '        proxy_pass http://pgv-backend:3000/ws;' \
+    '        proxy_http_version 1.1;' \
+    '        proxy_set_header Upgrade $http_upgrade;' \
+    '        proxy_set_header Connection "upgrade";' \
+    '        proxy_set_header Host $host;' \
+    '        proxy_set_header X-Real-IP $remote_addr;' \
+    '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;' \
+    '        proxy_set_header X-Forwarded-Proto $scheme;' \
+    '        proxy_read_timeout 86400;' \
     '    }' \
     '    location /ws {' \
     '        proxy_pass http://pgv-backend:3000;' \

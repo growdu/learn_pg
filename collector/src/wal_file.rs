@@ -93,8 +93,11 @@ fn read_records(segment_path: &Path) -> std::io::Result<Vec<WalInsertEvent>> {
             continue;
         }
 
-        let page_addr = read_le64(&page[8..16]);
-        let rem_len = read_le32(&page[16..20]) as usize;
+        // PG 18 WAL page header: page_addr and page_len are BIG-endian.
+        // The first page of a segment uses a 36-byte long header (XLogLongPageHeaderData);
+        // subsequent pages use the standard 20-byte header (XLogPageHeaderData).
+        let page_addr = read_be64(&page[8..16]);
+        let rem_len = read_be32(&page[16..20]) as usize;
         let mut offset = header_size;
         if !pending.is_empty() {
             let available = PAGE_SIZE - header_size;
@@ -265,6 +268,14 @@ fn read_le64(bytes: &[u8]) -> u64 {
     read_le32(&bytes[..4]) as u64 | ((read_le32(&bytes[4..8]) as u64) << 32)
 }
 
+fn read_be32(bytes: &[u8]) -> u32 {
+    (bytes[0] as u32) << 24 | (bytes[1] as u32) << 16 | (bytes[2] as u32) << 8 | (bytes[3] as u32)
+}
+
+fn read_be64(bytes: &[u8]) -> u64 {
+    (read_be32(&bytes[..4]) as u64) << 32 | (read_be32(&bytes[4..8]) as u64)
+}
+
 fn format_lsn(value: u64) -> String {
     let hi = (value >> 32) as u32;
     let lo = value as u32;
@@ -284,8 +295,9 @@ mod tests {
         let segment = wal_dir.join("000000010000000000000001");
 
         let mut bytes = vec![0u8; PAGE_SIZE];
-        write_le64(&mut bytes[8..16], 0);
-        write_le32(&mut bytes[16..20], 0);
+        // PG 18 WAL page header: page_addr and page_len are BIG-endian
+        write_be64(&mut bytes[8..16], 0);
+        write_be32(&mut bytes[16..20], 0);
         let offset = LONG_PAGE_HEADER_SIZE;
         write_le32(
             &mut bytes[offset..offset + 4],
@@ -314,8 +326,8 @@ mod tests {
         let segment = wal_dir.join("000000010000000000000001");
 
         let mut bytes = vec![0u8; PAGE_SIZE];
-        write_le64(&mut bytes[8..16], 0);
-        write_le32(&mut bytes[16..20], 0);
+        write_be64(&mut bytes[8..16], 0);
+        write_be32(&mut bytes[16..20], 0);
         let offset = LONG_PAGE_HEADER_SIZE;
         write_le32(&mut bytes[offset..offset + 4], RECORD_HEADER_SIZE as u32);
         bytes[offset + 17] = 3;
@@ -333,11 +345,12 @@ mod tests {
         let dir = unique_temp_dir();
         let wal_dir = dir.join("pg_wal");
         fs::create_dir_all(&wal_dir).expect("create wal dir");
-        let segment = wal_dir.join("000000010000000000000001");
+        let segment = wal_dir.join("000000010000000000000002");
 
         let mut bytes = vec![0u8; PAGE_SIZE * 2];
-        write_le64(&mut bytes[8..16], 0);
-        write_le32(&mut bytes[16..20], 0);
+        // PG 18 WAL page header: page_addr and page_len are BIG-endian
+        write_be64(&mut bytes[8..16], 0);
+        write_be32(&mut bytes[16..20], 0);
         let filler_offset = LONG_PAGE_HEADER_SIZE;
         let filler_len = 8128usize;
         write_le32(
@@ -357,8 +370,9 @@ mod tests {
         bytes[offset + 24..PAGE_SIZE].copy_from_slice(&[0u8; 4]);
 
         let page2 = &mut bytes[PAGE_SIZE..];
-        write_le64(&mut page2[8..16], PAGE_SIZE as u64);
-        write_le32(&mut page2[16..20], 16);
+        // PG 18 WAL page header: BIG-endian
+        write_be64(&mut page2[8..16], PAGE_SIZE as u64);
+        write_be32(&mut page2[16..20], 16);
         page2[PAGE_HEADER_SIZE..PAGE_HEADER_SIZE + 16].copy_from_slice(&[0u8; 16]);
 
         fs::write(&segment, bytes).expect("write segment");
@@ -379,8 +393,9 @@ mod tests {
         let segment = wal_dir.join("000000010000000000000004");
 
         let mut bytes = vec![0u8; PAGE_SIZE];
-        write_le64(&mut bytes[8..16], 0);
-        write_le32(&mut bytes[16..20], 0);
+        // PG 18 WAL page header: BIG-endian
+        write_be64(&mut bytes[8..16], 0);
+        write_be32(&mut bytes[16..20], 0);
 
         let mut payload = Vec::new();
         payload.push(0);
@@ -432,6 +447,18 @@ mod tests {
     fn write_le64(target: &mut [u8], value: u64) {
         write_le32(&mut target[..4], value as u32);
         write_le32(&mut target[4..8], (value >> 32) as u32);
+    }
+
+    fn write_be32(target: &mut [u8], value: u32) {
+        target[0] = (value >> 24) as u8;
+        target[1] = (value >> 16) as u8;
+        target[2] = (value >> 8) as u8;
+        target[3] = value as u8;
+    }
+
+    fn write_be64(target: &mut [u8], value: u64) {
+        write_be32(&mut target[..4], (value >> 32) as u32);
+        write_be32(&mut target[4..8], value as u32);
     }
 
     fn append_le32(target: &mut Vec<u8>, value: u32) {

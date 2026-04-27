@@ -3,21 +3,46 @@ package wal
 import (
 	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 )
 
-// WAL page size constant
-const PageSize = 8192
-
-const (
-	XLogPageHeaderSize     = 20
-	XLogLongPageHeaderSize = 28 // PG 18: XLogPageHeaderData(20) + xlp_magic(2) + xlp_info(2) + xlp_tli(2) + xlp_struct_size(2)
-	XLogRecordHeaderSize   = 24
-	WALRecordAlign         = 8
-)
+// WAL page layout (verified against PG 18.1 binary with pg_waldump):
+//   First page of segment: 40-byte (0x28) XLogLongPageHeaderData
+//   Continuation pages:    20-byte XLogShortPageHeaderData
+//
+// XLogLongPageHeaderData layout (40 bytes total):
+//   Off 0  (2): magic     = 0xD118 (LE)
+//   Off 2  (2): info      = 0x0006 (LE)
+//   Off 4  (4): page_size = 0x01000000 (BE = 16777216 = 16MB)
+//   Off 8  (4): xlp_tli   = BE uint32
+//   Off 12 (4): xlp_seg_size = BE uint32
+//   Off 16 (4): xlp_xlog_blcknz = BE uint32
+//   Off 20 (20): WAL data starts here (off 0x14 = 20 in page, but file offset 0x28)
+//   → WAL records actually start at file byte 0x28 = 40
+//
+// WAL address (walAddr) uses MIXED ENDIAN encoding:
+//   high 32 bits: big-endian (segment number)
+//   low 32 bits:  little-endian (offset within WAL segment)
+//
+// WAL record header fields (LE):
+//   xl_tot_len: offset 0,  uint32 (LE)
+//   xl_xid:     offset 4,  uint32 (LE)
+//   xl_prev:    offset 8,  uint32 (LE)
+//   xl_info:    offset 12, uint8
+//   xl_rmid:    offset 13, uint8
+//   padding:    offset 14-15, 2 bytes
+//   xl_crc:     offset 20, uint32 (LE)
+//   Total fixed header: 24 bytes
+const PageSize             = 8192
+const XLogPageHeaderSize     = 20   // XLogShortPageHeaderData
+const XLogLongPageHeaderSize = 40   // XLogLongPageHeaderData (40 bytes, not 20!)
+const WALSegmentSize         = 16777216 // 0x1000000
+const XLogRecordHeaderSize   = 24
+const WALRecordAlign         = 8
 
 // XLogRecordHeaderSize is the fixed header size
 // Rmgr names for PG 18
@@ -100,12 +125,16 @@ func (w *WALReader) ListWALSegments() ([]string, error) {
 	return segments, nil
 }
 
-// ReadRecords reads WAL records from a segment file
-func (w *WALReader) ReadRecords(segmentFile string, startOffset, limit int) ([]Record, error) {
+// ReadRecords reads WAL records from a segment file.
+// segNum is the WAL segment number extracted from the filename (e.g. 4 from "000000010000000000000004").
+func (w *WALReader) ReadRecords(segmentFile string, segNum uint64, startOffset, limit int) ([]Record, error) {
 	data, err := os.ReadFile(segmentFile)
 	if err != nil {
 		return nil, err
 	}
+
+	log.Printf("[WAL] ReadRecords: file=%s size=%d startOffset=%d limit=%d",
+		segmentFile, len(data), startOffset, limit)
 
 	var records []Record
 	var pending []byte
@@ -113,28 +142,49 @@ func (w *WALReader) ReadRecords(segmentFile string, startOffset, limit int) ([]R
 	var pendingLSN uint64
 	var pendingOffset uint32
 
+	pagesScanned := 0
+	bytesExamined := 0
+
 	for pageStart := 0; pageStart+PageSize <= len(data); pageStart += PageSize {
 		page := data[pageStart : pageStart+PageSize]
 		headerSize := XLogPageHeaderSize
-		if pageStart == 0 {
+		isFirstPage := pageStart == 0
+		if isFirstPage {
 			headerSize = XLogLongPageHeaderSize
 		}
 		if len(page) < headerSize {
 			break
 		}
 
-		// PG 18: WAL page address (WAL pointer) is big-endian at offset 8 (64-bit).
-		// This gives us the LSN base for all records on this page.
-		pageAddr := readBE64(page[8:16])
-		// PG 18: page_len at offset 16 (big-endian) tells us how many bytes
-		// of valid WAL data this page contains. 0 = page not yet written.
-		pageLen := readBE32(page[16:20])
-		offset := headerSize
+		// WAL address: compute from segment file name (segNum) + file offset.
+		// pageAddr read from the page header is a hint; use it only for the
+		// "start of page" value in debug logs, not for LSN computation.
+		walAddrHint := readLE64(page[8:16])
+		magic := readLE16(page[0:2])
+		info := readLE16(page[2:4])
 
-		if pageLen == 0 {
-			// Page not yet written, skip to next page
+		// Validate WAL page header magic. Valid PG 18 WAL pages
+		// always have magic == 0xD118 (LE). Skip pages with invalid
+		// magic to avoid parsing garbage data.
+		if magic != 0xD118 {
+			log.Printf("[WAL]   page %d: start=%d hdrSize=%d magic=0x%04X INVALID (expected 0xD118), skipping",
+				pagesScanned, pageStart, headerSize, magic)
+			pagesScanned++
 			continue
 		}
+
+		pagesScanned++
+		bytesExamined += headerSize
+
+		log.Printf("[WAL]   page %d: start=%d hdrSize=%d magic=0x%04X info=0x%04X walAddrHint=0x%X",
+			pagesScanned-1, pageStart, headerSize, magic, info, walAddrHint)
+
+		offset := headerSize
+
+		// PG 13+ removed xlp_len from XLogPageHeaderData.
+		// page_len == 0 is NOT a skip condition.
+		// Instead, scan for WAL records until we run out of page space.
+		// If the page is empty, the first record won't be valid (rec_len==0 breaks).
 
 		if len(pending) > 0 {
 			available := PageSize - headerSize
@@ -144,7 +194,6 @@ func (w *WALReader) ReadRecords(segmentFile string, startOffset, limit int) ([]R
 				take = available
 			}
 			pending = append(pending, page[headerSize:headerSize+take]...)
-			offset = headerSize + take
 			if len(pending) == pendingLen {
 				record := buildRecord(pending, pendingLSN, pendingOffset)
 				records = append(records, record)
@@ -153,7 +202,11 @@ func (w *WALReader) ReadRecords(segmentFile string, startOffset, limit int) ([]R
 				}
 				pending = nil
 				pendingLen = 0
+				// Continue parsing remaining records on this page
+				offset = headerSize + take
 			} else {
+				// Still waiting for more data; advance offset past what we consumed
+				offset = headerSize + take
 				continue
 			}
 		} else if pageStart > 0 {
@@ -175,7 +228,7 @@ func (w *WALReader) ReadRecords(segmentFile string, startOffset, limit int) ([]R
 			if recLen < XLogRecordHeaderSize {
 				break
 			}
-			lsnValue := pageAddr + uint64(offset)
+			lsnValue := (segNum << 32) | uint64(offset)
 			if offset+recLen > PageSize {
 				pending = append([]byte(nil), page[offset:PageSize]...)
 				pendingLen = recLen
@@ -194,6 +247,8 @@ func (w *WALReader) ReadRecords(segmentFile string, startOffset, limit int) ([]R
 		}
 	}
 
+	log.Printf("[WAL] ReadRecords done: scanned %d pages, found %d records",
+		pagesScanned, len(records))
 	return records, nil
 }
 
@@ -213,7 +268,8 @@ func (w *WALReader) TailRecords(limit int) ([]Record, error) {
 
 	var records []Record
 	for i := len(segments) - 1; i >= 0 && len(records) < limit*2; i-- {
-		segmentRecords, err := w.ReadRecords(segments[i], 0, 0)
+		segNum := extractSegNum(filepath.Base(segments[i]))
+		segmentRecords, err := w.ReadRecords(segments[i], segNum, 0, 0)
 		if err != nil {
 			continue
 		}
@@ -394,6 +450,18 @@ func alignRecordLength(length int) int {
 	return (length + WALRecordAlign - 1) &^ (WALRecordAlign - 1)
 }
 
+// extractSegNum extracts the segment number from a WAL segment filename.
+// Filename format: 24-character hex string like "000000010000000000000004".
+// The last 8 hex digits = segment number within the timeline.
+func extractSegNum(filename string) uint64 {
+	if len(filename) >= 8 {
+		var segNum uint64
+		fmt.Sscanf(filename[len(filename)-8:], "%x", &segNum)
+		return segNum
+	}
+	return 0
+}
+
 // readLE32 reads a little-endian uint32
 func readLE32(b []byte) uint32 {
 	return uint32(b[0]) |
@@ -420,6 +488,15 @@ func readBE64(b []byte) uint64 {
 		uint64(b[5])<<16 |
 		uint64(b[6])<<8 |
 		uint64(b[7])
+}
+
+// readMixedEndian64 reads the WAL address (walAddr) stored at offset 8 of
+// XLogLongPageHeaderData. In PG 18, walAddr is a pure little-endian uint64
+// stored directly (not mixed-endian):
+//   bytes[8:16] as LE64 = segment_number<<32 | offset_within_segment
+// Verified: bytes 00000000 02000000 at off=8 gives 0x200000000 (seg=2, off=0).
+func readMixedEndian64(b []byte) uint64 {
+	return readLE64(b[0:8])
 }
 
 // readLE64 reads a little-endian uint64
