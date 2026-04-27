@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -260,22 +261,30 @@ type WALRequest struct {
 func (h *Handler) ServeWAL(w http.ResponseWriter, r *http.Request) {
 	limit := parseIntQuery(r, "limit", 100)
 	dataDir := h.pgDataDir()
+	log.Printf("[WAL] pgDataDir=%s, limit=%d", dataDir, limit)
 	reader := wal.NewWALReader(dataDir)
 	segments, err := reader.ListWALSegments()
+	if err != nil {
+		log.Printf("[WAL] ListWALSegments error: %v", err)
+	}
 	if err != nil || len(segments) == 0 {
+		log.Printf("[WAL] WAL unavailable: err=%v, segments=%d", err, len(segments))
 		writeJSON(w, WALResponse{
 			Records: []WALRecordResponse{},
 			DataDir: dataDir,
 			Limit:   limit,
-			Note:    "WAL segment unavailable. Confirm PG_DATA_DIR and mounted pg_wal access.",
+			Note:    fmt.Sprintf("WAL segment unavailable. Confirm PG_DATA_DIR (%s) and mounted pg_wal access.", dataDir),
 		})
 		return
 	}
 
 	sort.Strings(segments)
 	segmentPath := segments[len(segments)-1]
+	log.Printf("[WAL] Using segment: %s (%d total)", filepath.Base(segmentPath), len(segments))
+
 	records, err := reader.TailRecords(limit)
 	if err != nil {
+		log.Printf("[WAL] TailRecords error: %v", err)
 		writeJSON(w, WALResponse{
 			Records: []WALRecordResponse{},
 			Segment: filepath.Base(segmentPath),
@@ -285,6 +294,7 @@ func (h *Handler) ServeWAL(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	log.Printf("[WAL] Parsed %d records from segment %s", len(records), filepath.Base(segmentPath))
 
 	resp := WALResponse{
 		Records: make([]WALRecordResponse, 0, len(records)),
@@ -379,9 +389,14 @@ func Start(h *Handler, addr string) error {
 }
 
 func (h *Handler) pgDataDir() string {
+	// Prefer PG-reported path if it actually exists on disk.
+	// When backend runs outside Docker, PG reports the container's
+	// /var/lib/postgresql/data which doesn't exist on the host.
 	if h.pgClient != nil {
 		if dataDir, err := h.pgClient.GetPGDataDir(); err == nil && dataDir != "" {
-			return dataDir
+			if _, err := os.Stat(dataDir); err == nil {
+				return dataDir
+			}
 		}
 	}
 	return h.config.PGDataDir

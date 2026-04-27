@@ -34,7 +34,7 @@ func Load() *Config {
 		PGUser:          getEnv("PG_USER", "postgres"),
 		PGPassword:      getEnv("PG_PASSWORD", "postgres"),
 		PGDatabase:      getEnv("PG_DATABASE", "postgres"),
-		PGDataDir:       getEnv("PG_DATA_DIR", "/var/lib/postgresql/data"),
+		PGDataDir:       getEnv("PG_DATA_DIR", "/dev_tool/docker_root/volumes/learn_pg_pg_data/_data/data"),
 		APIPort:         getEnvInt("API_PORT", 3000),
 		CollectorWSURL:  getEnv("COLLECTOR_WS_URL", "ws://localhost:8090"),
 		EnableEBPF:      getEnvBool("ENABLE_EBPF", true),

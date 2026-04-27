@@ -88,7 +88,16 @@ func ParseRecordInfo(rmgrid, info uint8) RecordInfo {
 	case 3: // Btree
 		desc = fmt.Sprintf("BTREE/OP_%d", baseInfo&0x0F)
 	case 10: // Heap3
-		desc = fmt.Sprintf("HEAP3/OP_%d", baseInfo)
+		switch baseInfo & 0x0F {
+		case 0x00:
+			desc = "HEAP3/CLEAN"
+		case 0x01:
+			desc = "HEAP3/FREEZE"
+		case 0x02:
+			desc = "HEAP3/MULTI_INSERT"
+		default:
+			desc = fmt.Sprintf("HEAP3/OP_%d", baseInfo&0x0F)
+		}
 	default:
 		desc = fmt.Sprintf("RMGR_%d/OP_%d", rmgrid, baseInfo)
 	}
