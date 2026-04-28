@@ -84,7 +84,7 @@ curl http://localhost:3000/health
               │         │            │
               │    ┌────▼────┐       │
               │    │WebSocket│◄──────┘
-              │    │  :8080  │
+              │    │  :3000  │
               │    └────┬────┘
               │         │
          ┌────▼─────────▼─────┐
@@ -117,7 +117,9 @@ LOG_LEVEL=warn
 
 # Collector
 ENABLE_EBPF=true
-BACKEND_WS_URL=ws://backend:3000
+# IMPORTANT: collector uses network_mode=host, so it must connect via host.docker.internal
+# (not the Docker internal service name). The port is the HOST port that backend exposes.
+BACKEND_WS_URL=ws://host.docker.internal:3000/ws
 EOF
 ```
 
@@ -210,7 +212,6 @@ docker service create \
   --network pgv-net \
   -e PG_HOST=pgv-postgres \
   -p 3000:3000 \
-  -p 8080:8080 \
   ghcr.io/growdu/learn_pg-backend:latest
 ```
 
@@ -227,7 +228,7 @@ upstream pgv_backend {
 }
 
 upstream pgv_ws {
-    server localhost:8080;
+    server localhost:3000;
 }
 
 server {

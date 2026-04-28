@@ -1,21 +1,20 @@
 FROM docker.m.daocloud.io/library/debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    clang llvm lld libelf-dev libbpf-dev linux-libc-dev libc6-dev \
-    libssl-dev pkg-config wget ca-certificates curl && rm -rf /var/lib/apt/lists/*
+    clang llvm lld libelf-dev libbpf-dev \
+    libssl-dev pkg-config wget ca-certificates curl gcc && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN wget -qO- https://sh.rustup.rs | sh /dev/stdin -y --default-toolchain 1.75.0
+RUN wget -qO- https://sh.rustup.rs | sh /dev/stdin -y --default-toolchain stable
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 WORKDIR /app
 
-COPY collector/Cargo.toml collector/Cargo.lock ./
-RUN mkdir src && printf 'fn main() {}\n' > src/main.rs
-RUN cargo build --release 2>/dev/null || true
+# Cilium headers not needed — BPF object is pre-built on the host.
 
-COPY collector/ .
-RUN rm -rf src/main.rs
-RUN ./build-ebpf.sh
+COPY Cargo.toml Cargo.lock ./
+COPY src/ ./src/
+COPY probes/ ./probes/
 
 RUN cargo build --release
 
@@ -24,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libelf1 libssl3 ca-certificates && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=0 /app/target/release/pg-collector /app/collector
+COPY --from=0 /app/target/release/pg-collector /app/pg-collector
 COPY --from=0 /app/probes/probe.bpf.o /app/probes/probe.bpf.o
 
-CMD ["/app/collector"]
+CMD ["/app/pg-collector"]

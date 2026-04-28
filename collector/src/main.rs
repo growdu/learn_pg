@@ -46,6 +46,8 @@ impl Config {
     fn from_env() -> Self {
         Self {
             backend_ws_url: env::var("BACKEND_WS_URL")
+                // network_mode=host 时通过 host.docker.internal 访问
+                // Docker 容器内则直接用服务名，如 ws://backend:3000/ws
                 .unwrap_or_else(|_| "ws://localhost:3000/ws".to_string()),
             pg_data_dir: env::var("PG_DATA_DIR")
                 .unwrap_or_else(|_| "/var/lib/postgresql/data".to_string()),
@@ -186,34 +188,42 @@ async fn main() -> Result<()> {
     tokio::spawn(ws_sender(rx, ws_url, shutdown_rx.resubscribe()));
 
     // WAL file polling fallback — sends wal_insert events + heartbeat
+    // Capture the tokio runtime handle BEFORE spawning any std threads,
+    // so the polling thread can send into the tokio mpsc channel safely.
+    let rt_handle = tokio::runtime::Handle::current();
     let tx_clone = tx;
     let poll_interval_ms = config.poll_interval_ms;
     let pg_data_dir = config.pg_data_dir.clone();
-    tokio::spawn(async move {
-        let mut ticker = interval(Duration::from_millis(poll_interval_ms));
-        let mut seen_lsns = HashSet::new();
 
+    std::thread::spawn(move || {
+        let mut seen_lsns = std::collections::HashSet::new();
         loop {
-            tokio::select! {
-                _ = ticker.tick() => {
-                    for event in wal_file::collect_new_wal_events(&pg_data_dir, &mut seen_lsns, 256) {
-                        let _ = tx_clone.send(wal_to_event(event)).await;
-                    }
-                    // Heartbeat so the frontend always knows collector status
-                    let evt = WsEvent {
-                        event_type: "heartbeat".to_string(),
-                        timestamp: now_micros(),
-                        pid: std::process::id(),
-                        seq: next_seq(),
-                        data: serde_json::json!({
-                            "mode": "wal-file",
-                            "source": "wal-file-collector",
-                            "wal_events_seen": seen_lsns.len(),
-                        }),
-                    };
-                    let _ = tx_clone.send(evt).await;
+            std::thread::sleep(std::time::Duration::from_millis(poll_interval_ms));
+
+            let wal_events = wal_file::collect_new_wal_events(&pg_data_dir, &mut seen_lsns, 256);
+
+            // Use block_on to run async send from the blocking thread safely.
+            let tx = tx_clone.clone();
+            let events = wal_events;
+            let seen = seen_lsns.len();
+            let _ = rt_handle.block_on(async move {
+                for event in events {
+                    let _ = tx.send(wal_to_event(event)).await;
                 }
-            }
+                // Heartbeat so the frontend always knows collector status
+                let evt = WsEvent {
+                    event_type: "heartbeat".to_string(),
+                    timestamp: now_micros(),
+                    pid: std::process::id(),
+                    seq: next_seq(),
+                    data: serde_json::json!({
+                        "mode": "wal-file",
+                        "source": "wal-file-collector",
+                        "wal_events_seen": seen,
+                    }),
+                };
+                let _ = tx.send(evt).await;
+            });
         }
     });
 

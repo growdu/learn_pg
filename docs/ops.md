@@ -18,7 +18,7 @@
        │              │              │               │
        │              │              │        ┌──────┴──────┐
        │              │              │        │  WebSocket  │
-       │              │              │        │   :8080     │
+       │              │              │        │   :3000     │
        │              │              │        └─────────────┘
        │         ┌────┴─────┐         │
        │         │  pg_wal  │         │
@@ -33,7 +33,7 @@
 |------|------|------|
 | PostgreSQL | 5432 | 数据库连接 |
 | Backend API | 3000 | REST API |
-| Backend WS | 8080 | WebSocket 实时事件 |
+| Backend WS | 3000 | WebSocket 实时事件 (与 HTTP API 同端口) |
 | Frontend | 80 | Web UI |
 | Collector | 8090 | eBPF 采集器 (可选) |
 

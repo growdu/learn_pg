@@ -10,6 +10,45 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 
+// ─────────────────────────────────────────────────────────────────────────────
+// eBPF Probe Symbol Matching Requirements
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// probe.bpf.o 是预编译的，其 uprobes 必须精确 attach 到 PostgreSQL 进程的
+// 目标符号。所有探针的符号名称在 probe/mod.rs 的 PROBE_TARGETS 中定义，
+// 核心对应关系如下：
+//
+//   BPF Program               Target Symbol          Purpose
+//   ───────────────────────────────────────────────────────────────────────
+//   probe_xlog_insert_entry  XLogInsert             WAL Insert entry (saves rmid/info)
+//   probe_xlog_insert_return XLogInsert             WAL Insert return (emits event)
+//   probe_heap_insert_entry  heap_insert            HeapInsert entry (saves rel_oid)
+//   probe_heap_update_entry  heap_update            HeapUpdate entry
+//   probe_heap_delete_entry  heap_delete            HeapDelete entry
+//   probe_buf_entry          BufFetchOrCreate       Buffer fetch/create entry
+//   probe_buf_return         BufFetchOrCreate       Buffer fetch/create return
+//   probe_buf_hit_entry      BufTableLookup         Buffer hash table hit entry
+//   probe_buf_hit_return     BufTableLookup         Buffer hash table hit return
+//   probe_xact_begin         StartTransaction       Transaction begin
+//   probe_xact_commit        CommitTransaction      Transaction commit
+//   probe_xact_abort         AbortTransaction       Transaction abort
+//   probe_lock_acquire_entry LockAcquire            Lock acquire entry
+//   probe_lock_acquire_return LockAcquire           Lock acquire return
+//   probe_lock_release_return LockRelease           Lock release
+//
+// CRITICAL: 这些符号的地址从 POSTGRES_BIN (或 /proc/<PID>/exe) 解析。
+// 编译 probe.bpf.o 时使用的 PG 源码版本必须与运行时 attach 到的 postgres
+// 二进制版本完全一致（包括 minor version）。如果版本不匹配，符号地址会偏移
+// 导致数据读取越界或无法触发探针。
+//
+// 推荐做法：
+//   1. 在目标机器上编译 probe.bpf.o，或
+//   2. 使用同一 PG 镜像（postgres:18）同时提供二进制和编译环境，或
+//   3. 使用 CO-RE (Compile Once Run Everywhere) + BTF 获取类型信息
+//
+// 如果 attach 失败，eBPF 采集器会打印警告并自动降级到 WAL 文件轮询模式。
+// ─────────────────────────────────────────────────────────────────────────────
+
 const EVENT_KIND_WAL_INSERT: u32 = 1;
 const EVENT_KIND_BUFFER_PIN: u32 = 2;
 const EVENT_KIND_XACT_STATE: u32 = 3;
@@ -61,121 +100,46 @@ pub fn spawn_ebpf_collector(
         .unwrap_or_else(|| config.postgres_bin.clone());
     let pid_filter = config.postgres_pid;
 
-    // --- WAL Insert probes ---
-    attach_uprobe(
-        &mut bpf,
-        "probe_xlog_insert_entry",
-        "XLogInsert",
-        &target_path,
-        pid_filter,
-    )?;
-    attach_uprobe(
-        &mut bpf,
-        "probe_xlog_insert_return",
-        "XLogInsert",
-        &target_path,
-        pid_filter,
-    )?;
+    // --- WAL Insert probes (mandatory) ---
+    if attach_uprobe(&mut bpf, "probe_xlog_insert_entry", "XLogInsert", &target_path, pid_filter).is_err() {
+        return Err(anyhow!("WAL probe 'probe_xlog_insert_entry' failed — eBPF cannot operate"));
+    }
+    let _ = attach_uprobe(&mut bpf, "probe_xlog_insert_return", "XLogInsert", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("WAL return probe failed (non-fatal): {}", e));
 
-    // --- Heap probes (populate xid/rel_oid for WAL events) ---
-    attach_uprobe(
-        &mut bpf,
-        "probe_heap_insert_entry",
-        "heap_insert",
-        &target_path,
-        pid_filter,
-    )?;
-    attach_uprobe(
-        &mut bpf,
-        "probe_heap_update_entry",
-        "heap_update",
-        &target_path,
-        pid_filter,
-    )?;
-    attach_uprobe(
-        &mut bpf,
-        "probe_heap_delete_entry",
-        "heap_delete",
-        &target_path,
-        pid_filter,
-    )?;
+    // --- Heap probes (optional — populate xid/rel_oid for WAL events) ---
+    let _ = attach_uprobe(&mut bpf, "probe_heap_insert_entry", "heap_insert", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("heap_insert probe failed (non-fatal): {}", e));
+    let _ = attach_uprobe(&mut bpf, "probe_heap_update_entry", "heap_update", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("heap_update probe failed (non-fatal): {}", e));
+    let _ = attach_uprobe(&mut bpf, "probe_heap_delete_entry", "heap_delete", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("heap_delete probe failed (non-fatal): {}", e));
 
-    // --- Buffer Pin probes ---
-    attach_uprobe(
-        &mut bpf,
-        "probe_buf_entry",
-        "BufFetchOrCreate",
-        &target_path,
-        pid_filter,
-    )?;
-    attach_uprobe(
-        &mut bpf,
-        "probe_buf_return",
-        "BufFetchOrCreate",
-        &target_path,
-        pid_filter,
-    )?;
-    // Fallback for buffer hits (found in hash table)
-    attach_uprobe(
-        &mut bpf,
-        "probe_buf_hit_entry",
-        "BufTableLookup",
-        &target_path,
-        pid_filter,
-    )?;
-    attach_uprobe(
-        &mut bpf,
-        "probe_buf_hit_return",
-        "BufTableLookup",
-        &target_path,
-        pid_filter,
-    )?;
+    // --- Buffer Pin probes (optional) ---
+    let _ = attach_uprobe(&mut bpf, "probe_buf_entry", "BufFetchOrCreate", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("BufFetchOrCreate entry probe failed (non-fatal): {}", e));
+    let _ = attach_uprobe(&mut bpf, "probe_buf_return", "BufFetchOrCreate", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("BufFetchOrCreate return probe failed (non-fatal): {}", e));
+    let _ = attach_uprobe(&mut bpf, "probe_buf_hit_entry", "BufTableLookup", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("BufTableLookup entry probe failed (non-fatal): {}", e));
+    let _ = attach_uprobe(&mut bpf, "probe_buf_hit_return", "BufTableLookup", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("BufTableLookup return probe failed (non-fatal): {}", e));
 
-    // --- Transaction State probes ---
-    attach_uprobe(
-        &mut bpf,
-        "probe_xact_begin",
-        "StartTransaction",
-        &target_path,
-        pid_filter,
-    )?;
-    attach_uprobe(
-        &mut bpf,
-        "probe_xact_commit",
-        "CommitTransaction",
-        &target_path,
-        pid_filter,
-    )?;
-    attach_uprobe(
-        &mut bpf,
-        "probe_xact_abort",
-        "AbortTransaction",
-        &target_path,
-        pid_filter,
-    )?;
+    // --- Transaction State probes (optional) ---
+    let _ = attach_uprobe(&mut bpf, "probe_xact_begin", "StartTransaction", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("StartTransaction probe failed (non-fatal): {}", e));
+    let _ = attach_uprobe(&mut bpf, "probe_xact_commit", "CommitTransaction", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("CommitTransaction probe failed (non-fatal): {}", e));
+    let _ = attach_uprobe(&mut bpf, "probe_xact_abort", "AbortTransaction", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("AbortTransaction probe failed (non-fatal): {}", e));
 
-    // --- Lock probes ---
-    attach_uprobe(
-        &mut bpf,
-        "probe_lock_acquire_entry",
-        "LockAcquire",
-        &target_path,
-        pid_filter,
-    )?;
-    attach_uprobe(
-        &mut bpf,
-        "probe_lock_acquire_return",
-        "LockAcquire",
-        &target_path,
-        pid_filter,
-    )?;
-    attach_uprobe(
-        &mut bpf,
-        "probe_lock_release_return",
-        "LockRelease",
-        &target_path,
-        pid_filter,
-    )?;
+    // --- Lock probes (optional) ---
+    let _ = attach_uprobe(&mut bpf, "probe_lock_acquire_entry", "LockAcquire", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("LockAcquire entry probe failed (non-fatal): {}", e));
+    let _ = attach_uprobe(&mut bpf, "probe_lock_acquire_return", "LockAcquire", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("LockAcquire return probe failed (non-fatal): {}", e));
+    let _ = attach_uprobe(&mut bpf, "probe_lock_release_return", "LockRelease", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("LockRelease probe failed (non-fatal): {}", e));
 
     let _probe_counts_map = bpf.take_map("probe_counts");
 
@@ -189,27 +153,51 @@ pub fn spawn_ebpf_collector(
     let ringbuf_bpf = bpf_ptr.clone();
     let ringbuf_shutdown = shutdown.resubscribe();
     let mut ringbuf_shutdown_mut = ringbuf_shutdown;
-    tokio::task::spawn_blocking(move || loop {
-        if ringbuf_shutdown_mut.try_recv().is_ok() {
-            break;
-        }
-        let mut ringbuf_guard = ringbuf_bpf.lock().unwrap();
-        if let Some(ref mut bpf_ref) = *ringbuf_guard {
-            let ringbuf_map = bpf_ref.map("events");
-            if let Some(raw_map) = ringbuf_map {
-                if let Ok(mut ringbuf) = RingBuf::try_from(raw_map) {
-                    while let Some(item) = ringbuf.next() {
-                        if let Some(event) = parse_raw_event(item.as_ref()) {
-                            if ringbuf_tx.blocking_send(event).is_err() {
-                                return;
+    tokio::task::spawn_blocking(move || {
+        eprintln!("RINGBUF READER: starting task");
+        let mut total_seen: u64 = 0;
+        let mut consecutive_empty: u64 = 0;
+        loop {
+            if ringbuf_shutdown_mut.try_recv().is_ok() {
+                break;
+            }
+            let mut ringbuf_guard = ringbuf_bpf.lock().unwrap();
+            if let Some(ref mut bpf_ref) = *ringbuf_guard {
+                let ringbuf_map = bpf_ref.map("events");
+                if let Some(raw_map) = ringbuf_map {
+                    if let Ok(mut ringbuf) = RingBuf::try_from(raw_map) {
+                        let mut batch: usize = 0;
+                        while let Some(item) = ringbuf.next() {
+                            if let Some(event) = parse_raw_event(item.as_ref()) {
+                                if ringbuf_tx.blocking_send(event).is_err() {
+                                    return;
+                                }
+                                batch += 1;
+                                total_seen += 1;
                             }
                         }
+                        if batch > 0 {
+                            tracing::debug!("eBPF ringbuf: {} events this poll, total={}", batch, total_seen);
+                            consecutive_empty = 0;
+                        } else {
+                            consecutive_empty += 1;
+                            if consecutive_empty == 1 || consecutive_empty % 20 == 0 {
+                                tracing::debug!("eBPF ringbuf: no events (poll #{})", consecutive_empty);
+                            }
+                        }
+                    } else {
+                        tracing::info!("eBPF ringbuf: RingBuf::try_from failed");
+                        consecutive_empty += 1;
                     }
+                } else {
+                    tracing::info!("eBPF ringbuf: no events map found");
                 }
+            } else {
+                tracing::debug!("eBPF ringbuf: bpf_ref is None");
             }
+            drop(ringbuf_guard);
+            std::thread::sleep(Duration::from_millis(50));
         }
-        drop(ringbuf_guard);
-        std::thread::sleep(Duration::from_millis(50));
     });
 
     // Heartbeat task — reads probe_counts every tick_interval_ms
