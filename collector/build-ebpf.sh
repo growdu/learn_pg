@@ -1,6 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
+BPF_INCLUDE="${BPF_INCLUDE:-/work/ai/learn_pg/collector/include}"
+
 ARCH="${BPF_TARGET_ARCH:-$(uname -m)}"
 case "$ARCH" in
   x86_64|amd64)  TARGET_ARCH="x86" ;;
@@ -9,17 +11,14 @@ case "$ARCH" in
 esac
 
 SYSROOT="$(uname -r)"
-AYAH_PATHS="
-  ${BPF_INCLUDE}
-  /dev_tool/go_cache/github.com/cilium/ebpf@v0.20.0/examples/headers
-  /dev_tool/go_cache/github.com/cilium/ebpf@v0.11.0/examples/headers
-  ${HOME}/go_cache/github.com/cilium/ebpf@v0.20.0/examples/headers
-"
 
-BPF_INCLUDE="${BPF_INCLUDE:-/work/ai/learn_pg/collector/include}"
 BPF_HEADERS=""
-
-for dir in $AYAH_PATHS; do
+for dir in \
+    "${BPF_INCLUDE}" \
+    "/dev_tool/go_cache/github.com/cilium/ebpf@v0.20.0/examples/headers" \
+    "/dev_tool/go_cache/github.com/cilium/ebpf@v0.11.0/examples/headers" \
+    "${HOME}/go_cache/github.com/cilium/ebpf@v0.20.0/examples/headers" \
+; do
   if [ -f "${dir}/bpf_helpers.h" ]; then
     BPF_HEADERS="$dir"
     break
@@ -32,7 +31,8 @@ if [ -z "$BPF_HEADERS" ]; then
 fi
 
 # Kernel headers: linux/bpf.h for BPF_MAP_TYPE_*, linux/bpf_common.h for BPF_ANY
-KERNEL_HEADERS="/lib/modules/${SYSROOT}/build/include:/usr/include"
+# Use /usr/include which contains headers from linux-libc-dev (always installed)
+KERNEL_HEADERS="/usr/include"
 
 # Symlink cilium headers into include/bpf/ so #include <bpf/bpf_helpers.h> resolves
 mkdir -p "${BPF_INCLUDE}/bpf"

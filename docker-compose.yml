@@ -34,6 +34,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: pgv-backend
+    ports:
+      - "3000:3000"
     environment:
       PG_HOST: postgres
       PG_PORT: 5432
@@ -79,12 +81,17 @@ services:
       dockerfile: Dockerfile
     container_name: pgv-collector
     environment:
-      BACKEND_WS_URL: ws://backend:3000/ws
+      # network_mode=host 时，必须通过 host.docker.internal 访问宿主机端口。
+      # 不要使用 Docker 服务名（如 backend），host 网络下无法解析。
+      BACKEND_WS_URL: ws://host.docker.internal:3000/ws
       COLLECTOR_PORT: 8090
       PG_DATA_DIR: /var/lib/postgresql/data
       USE_EBPF: "true"
       BPF_OBJECT_PATH: /app/probes/probe.bpf.o
+      # 必须与目标 PG 进程的二进制版本一致，probe 符号从该二进制解析
       POSTGRES_BIN: /usr/local/bin/postgres
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     network_mode: host
     pid: host
     privileged: true

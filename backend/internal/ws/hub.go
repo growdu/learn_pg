@@ -192,14 +192,24 @@ func (c *Client) readPump() {
 		//   - frontend sends messages → forwarded to collector + other frontends
 		//   - echo-back from collector is harmless
 		c.hub.mu.RLock()
+		msgLen := len(message)
+		if msgLen > 0 {
+			log.Printf("[WS] Received %d bytes from client, forwarding to %d other client(s)", msgLen, len(c.hub.clients)-1)
+		}
+		forwarded := 0
 		for client := range c.hub.clients {
 			if client != c {
 				select {
 				case client.send <- message:
+					forwarded++
 				default:
 					// slow client, drop
+					log.Printf("[WS] Slow client, dropping message")
 				}
 			}
+		}
+		if forwarded > 0 {
+			log.Printf("[WS] Forwarded to %d client(s)", forwarded)
 		}
 		c.hub.mu.RUnlock()
 	}
