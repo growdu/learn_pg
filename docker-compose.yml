@@ -44,7 +44,7 @@ services:
       PG_DATABASE: postgres
       API_PORT: 3000
       COLLECTOR_WS_URL: ws://collector:8090
-      PG_DATA_DIR: /var/lib/postgresql/data
+      PG_DATA_DIR: /var/lib/postgresql
     depends_on:
       postgres:
         condition: service_healthy

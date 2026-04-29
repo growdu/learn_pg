@@ -482,12 +482,13 @@ func (h *Handler) pgDataDir() string {
 }
 
 func (h *Handler) resolveXidRange(r *http.Request) (uint32, uint32) {
-	startXid := uint32(parseIntQuery(r, "start_xid", -1))
-	endXid := uint32(parseIntQuery(r, "end_xid", -1))
+	startXid := uint32(parseIntQuery(r, "start_xid", 0))
+	endXid := uint32(parseIntQuery(r, "end_xid", 0))
 	if startXid > 0 && endXid >= startXid {
 		return startXid, endXid
 	}
 
+	// Try pgClient first
 	if h.pgClient != nil {
 		if xid, err := h.pgClient.GetCurrentXid(); err == nil && xid > 0 {
 			end := uint32(xid)
@@ -496,6 +497,36 @@ func (h *Handler) resolveXidRange(r *http.Request) (uint32, uint32) {
 				start = end - 255
 			}
 			return start, end
+		}
+	}
+
+	// Fallback: infer XID range from pg_xact filenames (no DB connection needed)
+	// Try both PG_DATA_DIR and PG_DATA_DIR/data since the mount point varies.
+	candidates := []string{h.pgDataDir(), filepath.Join(h.pgDataDir(), "data")}
+	for _, dataDir := range candidates {
+		if dataDir == "" {
+			continue
+		}
+		pgXactDir := filepath.Join(dataDir, "pg_xact")
+		if files, err := os.ReadDir(pgXactDir); err == nil {
+			maxFileNum := uint32(0)
+			for _, f := range files {
+				name := f.Name()
+				if len(name) == 4 {
+					if n, err := strconv.ParseUint(name, 16, 32); err == nil {
+						if uint32(n) > maxFileNum {
+							maxFileNum = uint32(n)
+						}
+					}
+				}
+			}
+			// Each file covers 1048576 XIDs (8 bits per XID, 8192 bytes/page)
+			maxXid := (maxFileNum+1)*65536 - 1
+			start := uint32(0)
+			if maxXid > 255 {
+				start = maxXid - 255
+			}
+			return start, maxXid
 		}
 	}
 	return 0, 255
