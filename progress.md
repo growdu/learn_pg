@@ -22,8 +22,9 @@
 | 7a3b9c2 | 4.2-4.5 | eBPF探针定义模块（probe/mod.rs + probe.bpf.c） |
 | 052984b | 5.5 | TransactionStateView D3.js 状态机组件 |
 | 957f5ec | 6.2 | GitHub Actions CI 流水线 |
+| bde5280 | 2.9-2.11 | 优雅关闭, slog, 中间件, WAL API增强, 统一错误格式 |
 
-**累计 14 次提交，已推送至 GitHub (growdu/learn_pg)**
+**累计 15 次提交，已推送至 GitHub (growdu/learn_pg)**
 
 ### 项目状态：✅ 全部完成
 

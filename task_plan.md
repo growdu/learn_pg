@@ -18,14 +18,17 @@
 
 | 序号 | 任务 | 状态 | 备注 |
 |------|------|------|------|
-| 2.1 | Go 项目初始化（go mod init） | completed | gorilla/websocket 依赖 |
-| 2.2 | 配置加载模块（config.go，支持 env） | completed | PG/WS/API/Collector配置 |
-| 2.3 | PG Wire Protocol 客户端（pg/client.go） | completed | 无 libpq 依赖，自实现协议 |
-| 2.4 | WebSocket Hub（ws/hub.go） | completed | 广播中心，多客户端管理 |
-| 2.5 | HTTP API Handler（/health, /api/execute, /api/snapshot） | completed | REST + WS |
-| 2.6 | WAL 文件读取解析（pkg/wal/reader.go + parser.go） | completed | 读取 pg_wal 目录，XLogRecord 解析 |
-| 2.7 | CLOG 文件读取解析 | completed | 读取 pg_clog 目录，事务状态位 |
-| 2.8 | Docker 构建验证（backend/Dockerfile） | completed | multi-stage build |
+|| 2.1 | Go 项目初始化（go mod init） | completed | gorilla/websocket 依赖 |
+|| 2.2 | 配置加载模块（config.go，支持 env） | completed | PG/WS/API/Collector配置 |
+|| 2.3 | PG Wire Protocol 客户端（pg/client.go） | completed | 无 libpq 依赖，自实现协议 |
+|| 2.4 | WebSocket Hub（ws/hub.go） | completed | 广播中心，多客户端管理 |
+|| 2.5 | HTTP API Handler（/health, /api/execute, /api/snapshot） | completed | REST + WS |
+|| 2.6 | WAL 文件读取解析（pkg/wal/reader.go + parser.go） | completed | 读取 pg_wal 目录，XLogRecord 解析 |
+|| 2.7 | CLOG 文件读取解析 | completed | 读取 pg_clog 目录，事务状态位 |
+|| 2.8 | Docker 构建验证（backend/Dockerfile） | completed | multi-stage build |
+|| 2.9 | 优雅关闭 + 结构化日志 + 中间件 | completed | slog, request ID, CORS, /readyz, /livez |
+|| 2.10 | WAL API 增强 | completed | /api/wal/segments, WAL 范围查询 |
+|| 2.11 | 统一错误格式 + handler 清理 | completed | ErrorResponse, writeError helper |
 
 ## 阶段三：React 前端（P0）
 
