@@ -9,6 +9,6 @@ WORKDIR /app
 # Binary and BPF object are in the build context
 COPY target/release/pg-collector ./pg-collector
 COPY probes/ ./probes/
-COPY *.sh ./ 2>/dev/null || true
+COPY build-ebpf.sh ./
 
 ENTRYPOINT ["/app/pg-collector"]

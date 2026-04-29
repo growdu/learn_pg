@@ -89,7 +89,8 @@ services:
       USE_EBPF: "true"
       BPF_OBJECT_PATH: /app/probes/probe.bpf.o
       # 必须与目标 PG 进程的二进制版本一致，probe 符号从该二进制解析
-      POSTGRES_BIN: /usr/local/bin/postgres
+      # 注意: 该路径必须与 volumes 中的挂载路径一致
+      POSTGRES_BIN: /usr/lib/postgresql/18/bin/postgres
     extra_hosts:
       - "host.docker.internal:host-gateway"
     network_mode: host
@@ -106,6 +107,7 @@ services:
       - /lib/modules:/lib/modules:ro
       - /sys/kernel/debug:/sys/kernel/debug
       - /sys/fs/bpf:/sys/fs/bpf
+      - /usr/lib/postgresql/18/bin/postgres:/usr/lib/postgresql/18/bin/postgres:ro
       - pg_data:/var/lib/postgresql
     depends_on:
       - postgres
