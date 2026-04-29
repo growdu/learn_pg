@@ -29,50 +29,8 @@ RUN apk add --no-cache nginx
 COPY --from=builder /app/dist /usr/share/nginx/html
 
 # Nginx configuration
-# Key: proxy_pass without trailing slash so nginx passes full path to backend
-# Backend has: GET /health, POST /api/execute, WS /ws
-# Frontend uses: /api/health, /api/execute, /api/connections, /ws (with or without trailing slash)
-RUN printf '%s\n' \
-    'server {' \
-    '    listen 80;' \
-    '    root /usr/share/nginx/html;' \
-    '    index index.html;' \
-    '    location / {' \
-    '        try_files $uri $uri/ /index.html;' \
-    '    }' \
-    '    location /api/ {' \
-    '        resolver 127.0.0.11 valid=30s ipv6=off;' \
-    '        proxy_pass http://pgv-backend:3000;' \
-    '        proxy_set_header Host $host;' \
-    '        proxy_set_header X-Real-IP $remote_addr;' \
-    '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;' \
-    '        proxy_set_header X-Forwarded-Proto $scheme;' \
-    '    }' \
-    '    location /ws/ {' \
-    '        resolver 127.0.0.11 valid=30s ipv6=off;' \
-    '        proxy_pass http://pgv-backend:3000/ws;' \
-    '        proxy_http_version 1.1;' \
-    '        proxy_set_header Upgrade $http_upgrade;' \
-    '        proxy_set_header Connection "upgrade";' \
-    '        proxy_set_header Host $host;' \
-    '        proxy_set_header X-Real-IP $remote_addr;' \
-    '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;' \
-    '        proxy_set_header X-Forwarded-Proto $scheme;' \
-    '        proxy_read_timeout 86400;' \
-    '    }' \
-    '    location /ws {' \
-    '        resolver 127.0.0.11 valid=30s ipv6=off;' \
-    '        proxy_pass http://pgv-backend:3000;' \
-    '        proxy_http_version 1.1;' \
-    '        proxy_set_header Upgrade $http_upgrade;' \
-    '        proxy_set_header Connection "upgrade";' \
-    '        proxy_set_header Host $host;' \
-    '        proxy_set_header X-Real-IP $remote_addr;' \
-    '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;' \
-    '        proxy_set_header X-Forwarded-Proto $scheme;' \
-    '        proxy_read_timeout 86400;' \
-    '    }' \
-    '}' > /etc/nginx/conf.d/default.conf
+# Health endpoints must precede "location /" to avoid try_files fallback to SPA
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
 

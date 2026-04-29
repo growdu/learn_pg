@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"pg-visualizer-backend/internal/config"
 	"pg-visualizer-backend/internal/middleware"
@@ -448,13 +450,168 @@ func (h *Handler) ServeCLOG(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, resp)
 }
 
+// ServeCLOGFile reads a single CLOG segment file by name (e.g. /api/clog/0000).
+func (h *Handler) ServeCLOGFile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, r, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	// Extract filename from path: /api/clog/{filename}
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/clog/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		h.writeError(w, r, http.StatusBadRequest, "missing segment filename")
+		return
+	}
+	filename := parts[0]
+
+	dataDir := h.pgDataDir()
+	clogDir := filepath.Join(dataDir, "pg_xact")
+	filePath := filepath.Join(clogDir, filename)
+
+	entries, err := readCLOGFile(filePath)
+	if err != nil {
+		h.writeError(w, r, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, r, http.StatusOK, map[string]any{
+		"filename":   filename,
+		"path":       filePath,
+		"total":      len(entries),
+		"transactions": entries,
+	})
+}
+
+// readCLOGFile reads all transactions from a single CLOG segment file.
+func readCLOGFile(filePath string) ([]map[string]any, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	fileSize := stat.Size()
+	numPages := int(fileSize / clog.PageSize)
+	if fileSize%clog.PageSize != 0 {
+		numPages++
+	}
+
+	// Each file (segment) contains pagesPerSegment pages = 32 pages = 262144 XIDs
+	// The segment file number encodes the base XID: segNum * 262144
+	segmentBase := filepath.Base(filePath)
+	segNum, _ := strconv.ParseUint(segmentBase, 16, 32)
+
+	var results []map[string]any
+	for pageIdx := 0; pageIdx < numPages; pageIdx++ {
+		absolutePage := int(uint32(segNum)*uint32(clog.PagesPerSegment)) + pageIdx
+		page, err := (&clog.CLOGReader{}).ReadPage(filePath, pageIdx)
+		if err != nil {
+			continue
+		}
+		for _, tx := range page.Transactions {
+			results = append(results, map[string]any{
+				"xid":    tx.Xid,
+				"status": tx.Name,
+			})
+		}
+		_ = absolutePage
+	}
+	return results, nil
+}
+
+// ServeSnapshot returns a combined snapshot of backend processes,
+// active locks, and transaction states by querying pg_stat_activity + pg_locks.
+func (h *Handler) ServeSnapshot(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, r, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+
+	if h.pgClient == nil {
+		h.writeError(w, r, http.StatusServiceUnavailable, "no database connection")
+		return
+	}
+
+	// Query backend processes via Execute (the only public method)
+	// Note: PG 18 renamed columns — no "xid" column; use backend_xid, backend_xmin
+	rows, err := h.pgClient.Execute(`
+		SELECT pid, usename, datname, state, query_start, backend_xid, backend_xmin, backend_type,
+		       coalesce(wait_event_type,'') as wait_event_type, coalesce(wait_event,'') as wait_event,
+		       left(coalesce(query,'<idle>'), 200) as query
+		FROM pg_stat_activity
+		WHERE datid IS NOT NULL OR pid = pg_backend_pid()
+		ORDER BY pid`)
+	if err != nil {
+		h.writeError(w, r, http.StatusInternalServerError, "pg_stat_activity: "+err.Error())
+		return
+	}
+
+	var backends []map[string]any
+	if rows != nil && len(rows.Rows) > 0 {
+		cols := rows.Columns
+		for _, row := range rows.Rows {
+			m := map[string]any{}
+			for _, col := range cols {
+				m[col.Name] = row[col.Name]
+			}
+			backends = append(backends, m)
+		}
+	}
+
+	// Query lock information
+	lrows, err := h.pgClient.Execute(`
+		SELECT coalesce(locktype,'') as locktype, coalesce(relation::text,'') as relation,
+		       coalesce(virtualxid,'') as virtualxid, coalesce(transactionid::text,'') as transactionid,
+		       coalesce(mode,'') as mode, coalesce(granted::text,'') as granted,
+		       pid
+		FROM pg_locks
+		ORDER BY pid`)
+	if err != nil {
+		h.writeError(w, r, http.StatusInternalServerError, "pg_locks: "+err.Error())
+		return
+	}
+
+	var locks []map[string]any
+	if lrows != nil && len(lrows.Rows) > 0 {
+		cols := lrows.Columns
+		for _, row := range lrows.Rows {
+			m := map[string]any{}
+			for _, col := range cols {
+				m[col.Name] = row[col.Name]
+			}
+			locks = append(locks, m)
+		}
+	}
+
+	// Current XID
+	var currentXid int64
+	if xid, err := h.pgClient.GetCurrentXid(); err == nil {
+		currentXid = int64(xid)
+	}
+
+	writeJSON(w, r, http.StatusOK, map[string]any{
+		"timestamp":     time.Now().Unix(),
+		"current_xid":   currentXid,
+		"backends":      backends,
+		"locks":         locks,
+		"backend_count": len(backends),
+		"lock_count":    len(locks),
+	})
+}
+
+
+
 // ─── WebSocket ────────────────────────────────────────────────────────────────
 
 func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	ws.ServeWs(h.hub, w, r)
 }
 
-// ─── SetupRoutes ─────────────────────────────────────────────────────────────
+
 
 func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	mux.HandleFunc("/health", h.ServeHealth)
@@ -465,6 +622,8 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	mux.HandleFunc("/api/wal", h.ServeWAL)
 	mux.HandleFunc("/api/wal/segments", h.ServeWALSegments)
 	mux.HandleFunc("/api/clog", h.ServeCLOG)
+	mux.HandleFunc("/api/clog/", h.ServeCLOGFile)
+	mux.HandleFunc("/api/snapshot", h.ServeSnapshot)
 	mux.HandleFunc("/ws", h.ServeWS)
 }
 
