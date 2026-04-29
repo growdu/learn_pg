@@ -254,14 +254,21 @@ fn attach_uprobe(
         .with_context(|| format!("BPF program '{}' missing", program_name))?
         .try_into()
         .with_context(|| format!("BPF program '{}' is not a uprobe", program_name))?;
-    program
-        .load()
-        .with_context(|| format!("load uprobe program '{}'", program_name))?;
-    program
-        .attach(Some(symbol), 0, target_path, pid_filter)
-        .with_context(|| format!("attach {} to {}:{}", program_name, target_path, symbol))?;
+
+    tracing::debug!("[attach_uprobe] {}: loading bpf program...", program_name);
+    if let Err(e) = program.load() {
+        tracing::error!("[attach_uprobe] {}: load FAILED: {}", program_name, e);
+        return Err(anyhow!("load uprobe program '{}': {}", program_name, e));
+    }
+
+    tracing::debug!("[attach_uprobe] {}: attaching to {}:{}", program_name, target_path, symbol);
+    if let Err(e) = program.attach(Some(symbol), 0, target_path, pid_filter) {
+        tracing::error!("[attach_uprobe] {}: attach FAILED: {}", program_name, e);
+        return Err(anyhow!("attach {} to {}:{}: {}", program_name, target_path, symbol, e));
+    }
+
     tracing::info!(
-        "attached {} to {}:{}",
+        "[attach_uprobe] {}: SUCCESS -> {}:{}",
         program_name,
         target_path,
         symbol

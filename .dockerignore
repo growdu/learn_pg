@@ -1,8 +1,13 @@
-# Ignore everything
-*
-
-# Allow only what's needed for collector image
-!collector/target/release/pg-collector
-!collector/probes/probe.bpf.o
-!collector/Dockerfile.local
-!Dockerfile
+# PG build artifacts (exclude only; source .c/.h files are kept)
+postgresql_src/build/
+postgresql_src/src/**/**.o
+postgresql_src/src/**/**.a
+postgresql_src/src/**/**.so
+postgresql_src/contrib/**/**.o
+postgresql_src/contrib/**/**.a
+postgresql_src/contrib/**/**.so
+postgresql_src/src/pl/**/**.o
+postgresql_src/src/pl/**/**.a
+postgresql_src/src/pl/**/**.so
+# symlink to external path
+postgresql/

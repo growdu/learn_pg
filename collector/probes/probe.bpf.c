@@ -217,7 +217,12 @@ static __always_inline void fill_header(struct event_t *event, __u32 kind)
 
 static __always_inline void clear_state(char *s, __u32 len)
 {
-    __builtin_memset(s, 0, len);
+    // Clang 12 BPF backend doesn't support __builtin_memset.
+    // Use bpf_probe_read_kernel(dst, 0, src) which returns zeroed memory for len=0.
+    volatile __u8 tmp = 0;
+    for (__u32 i = 0; i < len; i++) {
+        bpf_probe_read_kernel(s + i, 1, &tmp);
+    }
 }
 
 // --------------------------------------------------------------------------
@@ -284,7 +289,6 @@ int probe_xlog_insert_return(struct pt_regs *ctx)
         return 0;
     }
 
-    __builtin_memset(event, 0, sizeof(*event));
     fill_header(event, EVENT_KIND_WAL_INSERT);
     event->payload.wal.xlog_ptr    = (__u64)PT_REGS_RC(ctx);
     event->payload.wal.record_len  = 0;   // estimated below if heap probe set block_count
@@ -321,17 +325,17 @@ int probe_xlog_insert_return(struct pt_regs *ctx)
 // Uses Relation->rd_node.relNode at offset 0x10 (RelFileNode struct on amd64).
 // RelFileNode layout (16 bytes): spcNode(4) + dbNode(4) + relNode(4) + bucket(4).
 // rd_node is the first field of Relation, so rd_node.relNode is at rel_ptr + 0x10.
+//
+// NOTE: rel_ptr must already be validated (non-NULL) before calling this.
+// This function only reads the rel_oid from the validated pointer.
 static __always_inline __u32
 read_rel_oid_from_relation(void *rel_ptr)
 {
-    if (!rel_ptr) return 0;
     // relNode is at offset 8 within the embedded RelFileNode struct (spcNode=0, dbNode=4, relNode=8)
     void *rnode = (void *)((char *)rel_ptr + 0x10);
-    __u32 b0 = BPF_LOAD_BYTE(rnode, 8);
-    __u32 b1 = BPF_LOAD_BYTE(rnode, 9);
-    __u32 b2 = BPF_LOAD_BYTE(rnode, 10);
-    __u32 b3 = BPF_LOAD_BYTE(rnode, 11);
-    __u32 rel_oid = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+    __u32 rel_oid = 0;
+    // Use bpf_probe_read_kernel for safe read from validated kernel pointer
+    bpf_probe_read_kernel(&rel_oid, sizeof(rel_oid), (void *)((char *)rnode + 8));
     return rel_oid;
 }
 
@@ -371,16 +375,18 @@ int probe_heap_insert_entry(struct pt_regs *ctx)
     args.info      = 0;    // HeapInsert → INSERT (set by XLogInsert)
     args.xid       = read_current_xid();
     args.block_num = 1;   // heap insert touches 1 block (the target)
-    args.rel_oid   = read_rel_oid_from_relation((void *)PT_REGS_PARM1(ctx));
+
+    // Safely read RDI (Relation*) — verifier requires bpf_probe_read_kernel for ptr args
+    void *rel_ptr = 0;
+    bpf_probe_read_kernel(&rel_ptr, sizeof(rel_ptr), (void *)PT_REGS_PARM1(ctx));
+    args.rel_oid  = read_rel_oid_from_relation(rel_ptr);
 
     bpf_map_update_elem(&wal_args, &tid, &args, BPF_ANY);
     return 0;
 }
 
-// simple_heap_insert entry: PG 18.3 has no heap_update/heap_delete standalone symbols.
-// simple_heap_insert handles all heap tuple mutations (INSERT/UPDATE/DELETE path).
-// We identify the operation type via block_count.
-SEC("uprobe/simple_heap_insert")
+// simple_heap_update entry: PG 18.3 symbol
+SEC("uprobe/simple_heap_update")
 int probe_heap_update_entry(struct pt_regs *ctx)
 {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
@@ -392,16 +398,17 @@ int probe_heap_update_entry(struct pt_regs *ctx)
     args.info      = 0;    // HeapUpdate → UPDATE (set by XLogInsert)
     args.xid       = read_current_xid();
     args.block_num = 2;    // heap update touches old + new location (2 blocks)
-    args.rel_oid   = read_rel_oid_from_relation((void *)PT_REGS_PARM1(ctx));
+
+    void *rel_ptr = 0;
+    bpf_probe_read_kernel(&rel_ptr, sizeof(rel_ptr), (void *)PT_REGS_PARM1(ctx));
+    args.rel_oid  = read_rel_oid_from_relation(rel_ptr);
 
     bpf_map_update_elem(&wal_args, &tid, &args, BPF_ANY);
     return 0;
 }
 
-// simple_heap_insert entry: PG 18.3 has no heap_delete standalone symbol.
-// This probe covers the DELETE path (which also goes through simple_heap_insert).
-// Source will be WAL_SRC_UNKNOWN since simple_heap_insert handles all tuple mutations.
-SEC("uprobe/simple_heap_insert")
+// simple_heap_delete entry: PG 18.3 symbol
+SEC("uprobe/simple_heap_delete")
 int probe_heap_delete_entry(struct pt_regs *ctx)
 {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
@@ -413,7 +420,10 @@ int probe_heap_delete_entry(struct pt_regs *ctx)
     args.info      = 0;    // HeapDelete → DELETE (set by XLogInsert)
     args.xid       = read_current_xid();
     args.block_num = 1;    // heap delete: 1 block
-    args.rel_oid   = read_rel_oid_from_relation((void *)PT_REGS_PARM1(ctx));
+
+    void *rel_ptr = 0;
+    bpf_probe_read_kernel(&rel_ptr, sizeof(rel_ptr), (void *)PT_REGS_PARM1(ctx));
+    args.rel_oid  = read_rel_oid_from_relation(rel_ptr);
 
     bpf_map_update_elem(&wal_args, &tid, &args, BPF_ANY);
     return 0;
@@ -448,21 +458,19 @@ int probe_buf_entry(struct pt_regs *ctx)
     //   offset 0x00: Node        rd_node    (RelFileNode embedded)
     //   offset 0x10: oid         rd_id      (= rel_oid)
     // We use rd_node.relNode at offset 0x18 (verified: spcNode+dbNode+relNode).
-    void *rel_ptr = (void *)PT_REGS_PARM1(ctx);
+    // Safely read RDI (Relation*) — verifier rejects direct PT_REGS_PARM1 as ptr
+    void *rel_ptr = 0;
+    bpf_probe_read_kernel(&rel_ptr, sizeof(rel_ptr), (void *)PT_REGS_PARM1(ctx));
     if (rel_ptr) {
         // RelFileNode relNode offset: read bytes at rel_ptr + 0x18
-        __u32 v18 = BPF_LOAD_BYTE(rel_ptr, 0x18);
-        __u32 v19 = BPF_LOAD_BYTE(rel_ptr, 0x19);
-        __u32 v1a = BPF_LOAD_BYTE(rel_ptr, 0x1a);
-        __u32 v1b = BPF_LOAD_BYTE(rel_ptr, 0x1b);
-        state.rel_node = v18 | (v19 << 8) | (v1a << 16) | (v1b << 24);
+        __u32 rel_node = 0;
+        bpf_probe_read_kernel(&rel_node, sizeof(rel_node), (void *)((char *)rel_ptr + 0x18));
+        state.rel_node = rel_node;
         if (state.rel_node == 0) {
             // Fallback: try rd_id at offset 0x10
-            __u32 v10 = BPF_LOAD_BYTE(rel_ptr, 0x10);
-            __u32 v11 = BPF_LOAD_BYTE(rel_ptr, 0x11);
-            __u32 v12 = BPF_LOAD_BYTE(rel_ptr, 0x12);
-            __u32 v13 = BPF_LOAD_BYTE(rel_ptr, 0x13);
-            state.rel_node = v10 | (v11 << 8) | (v12 << 16) | (v13 << 24);
+            __u32 rd_id = 0;
+            bpf_probe_read_kernel(&rd_id, sizeof(rd_id), (void *)((char *)rel_ptr + 0x10));
+            state.rel_node = rd_id;
         }
     }
 
@@ -497,7 +505,7 @@ int probe_buf_return(struct pt_regs *ctx)
         return 0;
     }
 
-    __builtin_memset(event, 0, sizeof(*event));
+    clear_state((char *)event, sizeof(*event));
     fill_header(event, EVENT_KIND_BUFFER_PIN);
     event->payload.buf.buffer_id = buffer_id;
     // is_hit: if block_num > 0 and we got a valid buffer, it was a pool hit

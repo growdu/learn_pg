@@ -108,3 +108,94 @@ location /ws {
 同时确认 backend 在端口 3000 正常运行。
 
 **涉及文件**：`frontend/nginx.conf`
+
+---
+
+## Q: /api/clog 返回 `startXid=4294967295`（即 `uint32(-1)`），没有任何事务数据
+
+**症状**：`curl http://host/api/clog` 返回的 `startXid` 和 `endXid` 都是 `4294967295`，`transactions` 为空数组，并提示 "No CLOG/pg_xact transactions were read for the requested range"。
+
+**根因（双重失效）**：
+
+1. `resolveXidRange()` 中 `parseIntQuery` 的默认值是 `-1`：
+   ```go
+   startXid := uint32(parseIntQuery(r, "start_xid", -1))  // uint32(-1) = 4294967295
+   endXid   := uint32(parseIntQuery(r, "end_xid", -1))
+   if startXid > 0 && endXid >= startXid {  // 4294967295 > 0 → true!
+       return startXid, endXid  // 直接返回了错误的 4294967295
+   }
+   ```
+   `uint32(-1)` 等于 `4294967295`，命中第一个 `if` 分支直接返回，根本没走 pgClient 和 fallback。
+
+2. 即使走到 fallback，Volume 挂载路径也可能不对：
+   - compose 挂载 `pg_data:/var/lib/postgresql:ro`
+   - backend 环境变量 `PG_DATA_DIR=/var/lib/postgresql`（修改后）
+   - 但实际 pg_xact 在 `/var/lib/postgresql/data/pg_xact/` 下
+
+**解决方法**：
+
+1. 修改 `parseIntQuery` 默认值，避免有符号整数转 uint32 溢出：
+   ```go
+   // handler.go resolveXidRange()
+   startXid := uint32(parseIntQuery(r, "start_xid", 0))
+   endXid   := uint32(parseIntQuery(r, "end_xid", 0))
+   ```
+
+2. fallback 增加双路径候选，同时探测 `PG_DATA_DIR` 和 `PG_DATA_DIR/data`：
+   ```go
+   candidates := []string{h.pgDataDir(), filepath.Join(h.pgDataDir(), "data")}
+   for _, dataDir := range candidates {
+       pgXactDir := filepath.Join(dataDir, "pg_xact")
+       // ...
+   }
+   ```
+
+3. 重新构建并部署：
+   ```bash
+   cd backend && docker build --no-cache -t learn_pg-backend:latest .
+   docker compose up -d --force-recreate backend
+   ```
+
+**涉及文件**：
+- `backend/internal/api/handler.go`（`resolveXidRange`、`pgDataDir`）
+- `docker-compose.yml`（`PG_DATA_DIR` 环境变量）
+- `backend/pkg/clog/reader.go`（CLOG reader）
+
+---
+
+## Q: /api/wal 返回 "WAL segments unavailable"，但 PostgreSQL 正在运行
+
+**症状**：WAL 日志读取失败，API 返回 `note: "WAL segments unavailable..."`，但 `pgv-postgres` 容器状态 healthy。
+
+**根因**：backend 容器未运行或 volume 挂载缺失。常见于手动 `docker run` 覆盖了 compose 管理的容器，导致：
+- 容器未接入 `pgv-net` 网络，无法连接 postgres
+- `pg_wal` 目录未通过 volume 共享给 backend
+
+**解决方法**：
+
+```bash
+# 检查 backend 是否运行
+docker compose -f docker-compose.yml ps backend
+
+# 如果有残留容器，先删除
+docker rm -f pgv-backend
+
+# 重新部署
+docker compose -f docker-compose.yml up -d backend
+
+# 验证 pg_wal 是否挂载
+docker exec pgv-backend ls /var/lib/postgresql/data/pg_wal/
+
+# 验证 WAL API
+curl http://192.168.3.99:80/api/wal
+```
+
+注意：如果 compose 镜像未更新，先重新 build：
+```bash
+cd backend && docker build --no-cache -t learn_pg-backend:latest .
+docker compose -f docker-compose.yml up -d --force-recreate backend
+```
+
+**涉及文件**：
+- `docker-compose.yml`（backend 服务定义、pg_data volume）
+- `backend/pkg/wal/reader.go`

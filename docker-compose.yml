@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   postgres:
-    image: postgres:18
+    image: learn_pg/postgres:18.3-debug
     container_name: pgv-postgres
     environment:
       POSTGRES_USER: postgres
@@ -21,6 +21,8 @@ services:
       - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql
+      # Expose postgres binary to host via bind mount so collector (host mode) can access it
+      - /opt/postgres/bin:/usr/lib/postgresql/18/bin:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -79,16 +81,18 @@ services:
     image: pg-collector:fix
     container_name: pgv-collector
     environment:
-      # network_mode=host 时，必须通过 host.docker.internal 访问宿主机端口。
-      # 不要使用 Docker 服务名（如 backend），host 网络下无法解析。
+      # network_mode=host: collector runs in host network, accesses postgres via host paths
+      # Backend: use host.docker.internal (host network allows DNS resolution of this)
+      RUST_BACKTRACE: "1"
+      RUST_LOG: "debug"
       BACKEND_WS_URL: ws://host.docker.internal:3000/ws
       COLLECTOR_PORT: 8090
+      # WAL data dir: /var/lib/postgresql/data (named volume, mounted at this path in postgres container)
       PG_DATA_DIR: /var/lib/postgresql/data
       USE_EBPF: "true"
       BPF_OBJECT_PATH: /app/probes/probe.bpf.o
-      # 必须与目标 PG 进程的二进制版本一致，probe 符号从该二进制解析
-      # 注意: 该路径必须与 volumes 中的挂载路径一致
-      POSTGRES_BIN: /usr/lib/postgresql/18/bin/postgres
+      # Host binary path (bind-mounted from postgres container via /opt/postgres/bin on host)
+      POSTGRES_BIN: /opt/postgres/bin/postgres
     extra_hosts:
       - "host.docker.internal:host-gateway"
     network_mode: host
@@ -105,8 +109,10 @@ services:
       - /lib/modules:/lib/modules:ro
       - /sys/kernel/debug:/sys/kernel/debug
       - /sys/fs/bpf:/sys/fs/bpf
-      - /usr/lib/postgresql/18/bin/postgres:/usr/lib/postgresql/18/bin/postgres:ro
-      - pg_data:/var/lib/postgresql
+      # WAL data dir accessible on host (named volume, shared with postgres container)
+      - pg_data:/var/lib/postgresql/data
+      # Postgres binary (bind mount from host; named volume can't expose arbitrary paths)
+      - /opt/postgres/bin:/opt/postgres/bin:ro
     depends_on:
       - postgres
     profiles:
