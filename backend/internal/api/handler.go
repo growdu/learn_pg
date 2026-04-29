@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -12,6 +12,7 @@ import (
 	"strconv"
 
 	"pg-visualizer-backend/internal/config"
+	"pg-visualizer-backend/internal/middleware"
 	"pg-visualizer-backend/internal/pg"
 	"pg-visualizer-backend/internal/ws"
 	"pg-visualizer-backend/pkg/clog"
@@ -38,29 +39,91 @@ func (h *Handler) SetPGClient(client *pg.Client) {
 	h.pgClient = client
 }
 
-// HealthResponse represents health check response
-type HealthResponse struct {
+// ─── Error response ─────────────────────────────────────────────────────────
+
+// ErrorResponse is the canonical error shape for all API responses.
+type ErrorResponse struct {
+	Success   bool   `json:"success"`
+	Error     string `json:"error"`
+	RequestID string `json:"request_id,omitempty"`
+}
+
+func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, status int, errMsg string) {
+	reqID := middleware.RequestIDFromContext(r.Context())
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(ErrorResponse{
+		Success:   false,
+		Error:     errMsg,
+		RequestID: reqID,
+	})
+}
+
+func writeJSON(w http.ResponseWriter, r *http.Request, status int, payload interface{}) {
+	reqID := middleware.RequestIDFromContext(r.Context())
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if reqID != "" {
+		w.Header().Set("X-Request-ID", reqID)
+	}
+	json.NewEncoder(w).Encode(payload)
+}
+
+// ─── Health endpoints ────────────────────────────────────────────────────────
+
+type healthResponse struct {
 	Status      string `json:"status"`
 	PGConnected bool   `json:"pg_connected"`
 }
 
 // ServeHealth handles GET /health
 func (h *Handler) ServeHealth(w http.ResponseWriter, r *http.Request) {
-	resp := HealthResponse{
-		Status:      "ok",
-		PGConnected: h.pgClient != nil,
-	}
-	if h.pgClient != nil {
+	pgOK := h.pgClient != nil
+	if pgOK {
 		if err := h.pgClient.Ping(); err != nil {
-			resp.PGConnected = false
+			pgOK = false
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	writeJSON(w, r, http.StatusOK, healthResponse{
+		Status:      "ok",
+		PGConnected: pgOK,
+	})
 }
 
-// ConnectRequest represents connection request
-type ConnectRequest struct {
+// ServeReadyz handles GET /readyz — readiness probe (all deps up)
+func (h *Handler) ServeReadyz(w http.ResponseWriter, r *http.Request) {
+	pgOK := h.pgClient != nil && h.pgClient.Ping() == nil
+	dataDir := h.pgDataDir()
+	dataDirOK := dataDir != "" && dirExists(dataDir)
+
+	if pgOK && dataDirOK {
+		writeJSON(w, r, http.StatusOK, map[string]string{
+			"status":   "ready",
+			"pg":       "ok",
+			"data_dir": dataDir,
+		})
+		return
+	}
+
+	status := "degraded"
+	if !pgOK {
+		status = "not_ready"
+	}
+	writeJSON(w, r, http.StatusServiceUnavailable, map[string]string{
+		"status":   status,
+		"pg":       map[bool]string{true: "ok", false: "unavailable"}[pgOK],
+		"data_dir": dataDir,
+	})
+}
+
+// ServeLivez handles GET /livez — liveness probe (process alive)
+func (h *Handler) ServeLivez(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, r, http.StatusOK, map[string]string{"status": "alive"})
+}
+
+// ─── Connect ─────────────────────────────────────────────────────────────────
+
+type connectRequest struct {
 	Host     string `json:"host"`
 	Port     int    `json:"port"`
 	User     string `json:"user"`
@@ -68,106 +131,122 @@ type ConnectRequest struct {
 	Database string `json:"database"`
 }
 
-// ConnectResponse represents connection response
-type ConnectResponse struct {
+type connectResponse struct {
 	Success bool   `json:"success"`
-	Message string `json:"message"`
+	Error   string `json:"error,omitempty"`
 	Version string `json:"version,omitempty"`
 	DataDir string `json:"data_dir,omitempty"`
 }
 
-// ServeConnect handles POST /api/connect
 func (h *Handler) ServeConnect(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[API] ServeConnect called")
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		h.writeError(w, r, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
 
-	log.Printf("[API] Reading body")
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64*1024))
 	if err != nil {
-		http.Error(w, "Failed to read body", http.StatusBadRequest)
+		h.writeError(w, r, http.StatusBadRequest, "failed to read body")
 		return
 	}
 	defer r.Body.Close()
 
-	log.Printf("[API] Body: %s", string(body))
-	var req ConnectRequest
+	var req connectRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		h.writeError(w, r, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
-	// Use defaults from config if not provided
-	host := req.Host
-	if host == "" {
-		host = h.config.PGHost
-	}
-	port := req.Port
-	if port == 0 {
-		port = h.config.PGPort
-	}
-	user := req.User
-	if user == "" {
-		user = h.config.PGUser
-	}
-	password := req.Password
-	if password == "" {
-		password = h.config.PGPassword
-	}
-	db := req.Database
-	if db == "" {
-		db = h.config.PGDatabase
-	}
+	host := orDefaultStr(req.Host, h.config.PGHost)
+	port := orDefaultInt(req.Port, h.config.PGPort)
+	user := orDefaultStr(req.User, h.config.PGUser)
+	password := orDefaultStr(req.Password, h.config.PGPassword)
+	db := orDefaultStr(req.Database, h.config.PGDatabase)
 
 	// Close existing connection
 	if h.pgClient != nil {
 		h.pgClient.Close()
 	}
 
-	// Create new connection
 	client := &pg.Client{}
 	if err := client.Connect(host, port, user, password, db); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(ConnectResponse{
-			Success: false,
-			Message: err.Error(),
-		})
+		h.writeError(w, r, http.StatusBadGateway, err.Error())
 		return
 	}
 
 	h.pgClient = client
-	log.Printf("[API] PG client set, getting version")
-
 	version, _ := client.GetVersion()
-	log.Printf("[API] Got version: %s", version)
 	dataDir, _ := client.GetPGDataDir()
 
-	log.Printf("[API] Sending response")
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ConnectResponse{
+	slog.Info("PG connected", "host", host, "port", port, "db", db, "version", version)
+	writeJSON(w, r, http.StatusOK, connectResponse{
 		Success: true,
-		Message: "Connected successfully",
 		Version: version,
 		DataDir: dataDir,
 	})
-	log.Printf("[API] Response sent")
 }
 
-// ExecuteRequest represents SQL execution request
-type ExecuteRequest struct {
+// ─── Execute ─────────────────────────────────────────────────────────────────
+
+type executeRequest struct {
 	SQL string `json:"sql"`
 }
 
-// ExecuteResponse represents SQL execution response
-type ExecuteResponse struct {
-	Success bool              `json:"success"`
-	Result  *pg.ExecuteResult `json:"result,omitempty"`
-	Error   string            `json:"error,omitempty"`
+type executeResponse struct {
+	Success bool                `json:"success"`
+	Result  *pg.ExecuteResult  `json:"result,omitempty"`
+	Error   string              `json:"error,omitempty"`
 }
 
-type WALRecordResponse struct {
+func (h *Handler) ServeExecute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, r, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	if h.pgClient == nil {
+		h.writeError(w, r, http.StatusServiceUnavailable, "not connected to PostgreSQL")
+		return
+	}
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64*1024))
+	if err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "failed to read body")
+		return
+	}
+	defer r.Body.Close()
+
+	var req executeRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.SQL == "" {
+		h.writeError(w, r, http.StatusBadRequest, "sql field is required")
+		return
+	}
+
+	result, err := h.pgClient.Execute(req.SQL)
+	if err != nil {
+		h.writeError(w, r, http.StatusOK, err.Error())
+		return
+	}
+
+	writeJSON(w, r, http.StatusOK, executeResponse{
+		Success: result.Error == "",
+		Result:  result,
+		Error:   result.Error,
+	})
+}
+
+// ─── WAL ─────────────────────────────────────────────────────────────────────
+
+type walRequest struct {
+	StartLSN string `json:"start_lsn"` // optional LSN to start from
+	Segment  string `json:"segment"`   // optional specific segment name
+	Limit    int    `json:"limit"`     // max records (default 100)
+}
+
+type walRecordResponse struct {
 	LSN        string                 `json:"lsn"`
 	RmgrName   string                 `json:"rmgrName"`
 	Operation  string                 `json:"operation,omitempty"`
@@ -181,112 +260,72 @@ type WALRecordResponse struct {
 	Details    map[string]interface{} `json:"details,omitempty"`
 }
 
-type WALResponse struct {
-	Records []WALRecordResponse `json:"records"`
-	Segment string              `json:"segment,omitempty"`
-	DataDir string              `json:"dataDir,omitempty"`
-	Limit   int                 `json:"limit"`
-	Note    string              `json:"note,omitempty"`
+type walResponse struct {
+	Records []walRecordResponse `json:"records"`
+	Segment string             `json:"segment,omitempty"`
+	DataDir string             `json:"dataDir,omitempty"`
+	Limit   int                `json:"limit"`
+	Note    string             `json:"note,omitempty"`
 }
 
-type CLOGTransactionResponse struct {
-	Xid    uint32 `json:"xid"`
-	Status string `json:"status"`
-}
-
-type CLOGResponse struct {
-	Transactions []CLOGTransactionResponse `json:"transactions"`
-	StartXid     uint32                    `json:"startXid"`
-	EndXid       uint32                    `json:"endXid"`
-	DataDir      string                    `json:"dataDir,omitempty"`
-	Note         string                    `json:"note,omitempty"`
-}
-
-// ServeExecute handles POST /api/execute
-func (h *Handler) ServeExecute(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[API] ServeExecute called method=%s", r.Method)
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	if h.pgClient == nil {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(ExecuteResponse{
-			Success: false,
-			Error:   "Not connected to PostgreSQL",
-		})
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Failed to read body", http.StatusBadRequest)
-		return
-	}
-	defer r.Body.Close()
-
-	var req ExecuteRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	result, err := h.pgClient.Execute(req.SQL)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(ExecuteResponse{
-			Success: false,
-			Error:   err.Error(),
-		})
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ExecuteResponse{
-		Success: result.Error == "",
-		Result:  result,
-		Error:   result.Error,
-	})
-}
-
-// WALRequest represents WAL query request
-type WALRequest struct {
-	StartLSN string `json:"start_lsn"`
-	EndLSN   string `json:"end_lsn"`
-	Limit    int    `json:"limit"`
-}
-
-// ServeWAL handles GET /api/wal
 func (h *Handler) ServeWAL(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, r, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+
 	limit := parseIntQuery(r, "limit", 100)
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
 	dataDir := h.pgDataDir()
-	log.Printf("[WAL] pgDataDir=%s, limit=%d", dataDir, limit)
 	reader := wal.NewWALReader(dataDir)
 	segments, err := reader.ListWALSegments()
-	if err != nil {
-		log.Printf("[WAL] ListWALSegments error: %v", err)
-	}
 	if err != nil || len(segments) == 0 {
-		log.Printf("[WAL] WAL unavailable: err=%v, segments=%d", err, len(segments))
-		writeJSON(w, WALResponse{
-			Records: []WALRecordResponse{},
+		writeJSON(w, r, http.StatusOK, walResponse{
+			Records: []walRecordResponse{},
 			DataDir: dataDir,
 			Limit:   limit,
-			Note:    fmt.Sprintf("WAL segment unavailable. Confirm PG_DATA_DIR (%s) and mounted pg_wal access.", dataDir),
+			Note:    "WAL segments unavailable. Check that pg_wal is mounted and PG is running.",
 		})
 		return
 	}
-
 	sort.Strings(segments)
-	segmentPath := segments[len(segments)-1]
-	log.Printf("[WAL] Using segment: %s (%d total)", filepath.Base(segmentPath), len(segments))
 
-	records, err := reader.TailRecords(limit)
+	// Determine which segment to read
+	var segmentPath string
+	if seg := r.URL.Query().Get("segment"); seg != "" {
+		// Find requested segment
+		for _, s := range segments {
+			if filepath.Base(s) == seg {
+				segmentPath = s
+				break
+			}
+		}
+		if segmentPath == "" {
+			h.writeError(w, r, http.StatusBadRequest, "segment not found: "+seg)
+			return
+		}
+	} else {
+		// Use newest segment
+		segmentPath = segments[len(segments)-1]
+	}
+
+	// Parse start offset if provided
+	startOffset := 0
+	if startLSN := r.URL.Query().Get("start_lsn"); startLSN != "" {
+		startOffset = parseLSNOffset(startLSN)
+	}
+
+	segNum := extractSegNum(filepath.Base(segmentPath))
+	records, err := reader.ReadRecords(segmentPath, segNum, startOffset, limit)
 	if err != nil {
-		log.Printf("[WAL] TailRecords error: %v", err)
-		writeJSON(w, WALResponse{
-			Records: []WALRecordResponse{},
+		writeJSON(w, r, http.StatusOK, walResponse{
+			Records: []walRecordResponse{},
 			Segment: filepath.Base(segmentPath),
 			DataDir: dataDir,
 			Limit:   limit,
@@ -294,50 +333,93 @@ func (h *Handler) ServeWAL(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	log.Printf("[WAL] Parsed %d records from segment %s", len(records), filepath.Base(segmentPath))
 
-	resp := WALResponse{
-		Records: make([]WALRecordResponse, 0, len(records)),
+	resp := walResponse{
+		Records: make([]walRecordResponse, 0, len(records)),
 		Segment: filepath.Base(segmentPath),
 		DataDir: dataDir,
 		Limit:   limit,
 	}
-	for _, record := range records {
-		resp.Records = append(resp.Records, WALRecordResponse{
-			LSN:        record.LSN,
-			RmgrName:   record.RmgrName,
-			Operation:  record.Operation,
-			Info:       record.Info,
-			Xid:        record.Xid,
-			RecordLen:  record.RecordLen,
-			PayloadLen: record.PayloadLen,
-			PrevLSN:    record.PrevLSN,
-			PageOffset: record.PageOffset,
-			Blocks:     record.Blocks,
-			Details:    record.Details,
+	for _, rec := range records {
+		resp.Records = append(resp.Records, walRecordResponse{
+			LSN:        rec.LSN,
+			RmgrName:   rec.RmgrName,
+			Operation:  rec.Operation,
+			Info:       rec.Info,
+			Xid:        rec.Xid,
+			RecordLen:  rec.RecordLen,
+			PayloadLen: rec.PayloadLen,
+			PrevLSN:    rec.PrevLSN,
+			PageOffset: rec.PageOffset,
+			Blocks:     rec.Blocks,
+			Details:    rec.Details,
 		})
 	}
+
 	if len(resp.Records) == 0 {
 		resp.Note = "No WAL records parsed from the selected segment yet."
 	}
-	writeJSON(w, resp)
+
+	writeJSON(w, r, http.StatusOK, resp)
 }
 
-// CLOGRequest represents CLOG query request
-type CLOGRequest struct {
-	StartXid uint32 `json:"start_xid"`
-	EndXid   uint32 `json:"end_xid"`
+// ─── WAL Segments list ────────────────────────────────────────────────────────
+
+type walSegmentsResponse struct {
+	Segments []string `json:"segments"`
+	DataDir  string   `json:"dataDir,omitempty"`
+	Count    int      `json:"count"`
 }
 
-// ServeCLOG handles GET /api/clog
+// ServeWALSegments handles GET /api/wal/segments — list available WAL segments
+func (h *Handler) ServeWALSegments(w http.ResponseWriter, r *http.Request) {
+	dataDir := h.pgDataDir()
+	reader := wal.NewWALReader(dataDir)
+	segments, err := reader.ListWALSegments()
+	if err != nil {
+		h.writeError(w, r, http.StatusOK, "wal_segments: "+err.Error())
+		return
+	}
+	names := make([]string, len(segments))
+	for i, s := range segments {
+		names[i] = filepath.Base(s)
+	}
+	sort.Strings(names)
+	writeJSON(w, r, http.StatusOK, walSegmentsResponse{
+		Segments: names,
+		DataDir:  dataDir,
+		Count:    len(names),
+	})
+}
+
+// ─── CLOG ─────────────────────────────────────────────────────────────────────
+
+type clogResponse struct {
+	Transactions []clogTransactionResponse `json:"transactions"`
+	StartXid     uint32                   `json:"startXid"`
+	EndXid       uint32                   `json:"endXid"`
+	DataDir      string                   `json:"dataDir,omitempty"`
+	Note         string                   `json:"note,omitempty"`
+}
+
+type clogTransactionResponse struct {
+	Xid    uint32 `json:"xid"`
+	Status string `json:"status"`
+}
+
 func (h *Handler) ServeCLOG(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, r, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+
 	startXid, endXid := h.resolveXidRange(r)
 	dataDir := h.pgDataDir()
 	reader := clog.NewCLOGReader(dataDir)
 	transactions, err := reader.ReadRange(startXid, endXid)
 	if err != nil {
-		writeJSON(w, CLOGResponse{
-			Transactions: []CLOGTransactionResponse{},
+		writeJSON(w, r, http.StatusOK, clogResponse{
+			Transactions: []clogTransactionResponse{},
 			StartXid:     startXid,
 			EndXid:       endXid,
 			DataDir:      dataDir,
@@ -346,52 +428,49 @@ func (h *Handler) ServeCLOG(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := CLOGResponse{
-		Transactions: make([]CLOGTransactionResponse, 0, len(transactions)),
+	resp := clogResponse{
+		Transactions: make([]clogTransactionResponse, 0, len(transactions)),
 		StartXid:     startXid,
 		EndXid:       endXid,
 		DataDir:      dataDir,
 	}
 	for _, tx := range transactions {
-		resp.Transactions = append(resp.Transactions, CLOGTransactionResponse{
+		resp.Transactions = append(resp.Transactions, clogTransactionResponse{
 			Xid:    tx.Xid,
 			Status: tx.Name,
 		})
 	}
+
 	if len(resp.Transactions) == 0 {
 		resp.Note = "No CLOG/pg_xact transactions were read for the requested range."
 	}
-	writeJSON(w, resp)
+
+	writeJSON(w, r, http.StatusOK, resp)
 }
 
-// ServeWS handles WebSocket upgrade at /ws
+// ─── WebSocket ────────────────────────────────────────────────────────────────
+
 func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	ws.ServeWs(h.hub, w, r)
 }
 
-// SetupRoutes configures all HTTP routes
+// ─── SetupRoutes ─────────────────────────────────────────────────────────────
+
 func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	mux.HandleFunc("/health", h.ServeHealth)
+	mux.HandleFunc("/readyz", h.ServeReadyz)
+	mux.HandleFunc("/livez", h.ServeLivez)
 	mux.HandleFunc("/api/connect", h.ServeConnect)
 	mux.HandleFunc("/api/execute", h.ServeExecute)
 	mux.HandleFunc("/api/wal", h.ServeWAL)
+	mux.HandleFunc("/api/wal/segments", h.ServeWALSegments)
 	mux.HandleFunc("/api/clog", h.ServeCLOG)
 	mux.HandleFunc("/ws", h.ServeWS)
 }
 
-// Start starts the API server
-func Start(h *Handler, addr string) error {
-	mux := http.NewServeMux()
-	SetupRoutes(h, mux)
-
-	fmt.Printf("[API] Starting server on %s\n", addr)
-	return http.ListenAndServe(addr, mux)
-}
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 func (h *Handler) pgDataDir() string {
-	// Prefer PG-reported path if it actually exists on disk.
-	// When backend runs outside Docker, PG reports the container's
-	// /var/lib/postgresql/data which doesn't exist on the host.
 	if h.pgClient != nil {
 		if dataDir, err := h.pgClient.GetPGDataDir(); err == nil && dataDir != "" {
 			if _, err := os.Stat(dataDir); err == nil {
@@ -403,16 +482,15 @@ func (h *Handler) pgDataDir() string {
 }
 
 func (h *Handler) resolveXidRange(r *http.Request) (uint32, uint32) {
-	startXid := parseIntQuery(r, "start_xid", -1)
-	endXid := parseIntQuery(r, "end_xid", -1)
-	if startXid >= 0 && endXid >= startXid {
-		return uint32(startXid), uint32(endXid)
+	startXid := uint32(parseIntQuery(r, "start_xid", -1))
+	endXid := uint32(parseIntQuery(r, "end_xid", -1))
+	if startXid > 0 && endXid >= startXid {
+		return startXid, endXid
 	}
 
 	if h.pgClient != nil {
-		currentXid, err := h.pgClient.GetCurrentXid()
-		if err == nil && currentXid > 0 {
-			end := uint32(currentXid)
+		if xid, err := h.pgClient.GetCurrentXid(); err == nil && xid > 0 {
+			end := uint32(xid)
 			start := uint32(0)
 			if end > 255 {
 				start = end - 255
@@ -420,23 +498,74 @@ func (h *Handler) resolveXidRange(r *http.Request) (uint32, uint32) {
 			return start, end
 		}
 	}
-
 	return 0, 255
 }
 
 func parseIntQuery(r *http.Request, key string, defaultValue int) int {
-	value := r.URL.Query().Get(key)
-	if value == "" {
-		return defaultValue
+	if v := r.URL.Query().Get(key); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			return parsed
+		}
 	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return defaultValue
-	}
-	return parsed
+	return defaultValue
 }
 
-func writeJSON(w http.ResponseWriter, payload interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(payload)
+// parseLSNOffset extracts the byte offset from an LSN string like "0/16D4F30".
+// Returns 0 if parsing fails.
+func parseLSNOffset(lsn string) int {
+	parts := splitLSN(lsn)
+	if len(parts) != 2 {
+		return 0
+	}
+	n, err := strconv.ParseUint(parts[1], 16, 32)
+	if err != nil {
+		return 0
+	}
+	return int(n)
+}
+
+func splitLSN(lsn string) []string {
+	for i := 0; i < len(lsn); i++ {
+		if lsn[i] == '/' {
+			return []string{lsn[:i], lsn[i+1:]}
+		}
+	}
+	return nil
+}
+
+// dirExists checks if a directory exists on the filesystem.
+func dirExists(path string) bool {
+	if path == "" {
+		return false
+	}
+	if _, err := os.Stat(path); err == nil {
+		return true
+	}
+	return false
+}
+
+// orDefaultInt returns def if val is 0, otherwise val.
+func orDefaultInt(val, def int) int {
+	if val == 0 {
+		return def
+	}
+	return val
+}
+
+// orDefaultStr returns def if val is empty, otherwise val.
+func orDefaultStr(val, def string) string {
+	if val == "" {
+		return def
+	}
+	return val
+}
+
+func extractSegNum(filename string) uint64 {
+	if len(filename) >= 8 {
+		var segNum uint64
+		if _, err := fmt.Sscanf(filename[len(filename)-8:], "%x", &segNum); err == nil {
+			return segNum
+		}
+	}
+	return 0
 }

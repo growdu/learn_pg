@@ -40,7 +40,7 @@ func TestReadRecordsParsesSyntheticSegment(t *testing.T) {
 	}
 
 	reader := NewWALReader(dir)
-	records, err := reader.ReadRecords(segmentPath, 0, 10)
+	records, err := reader.ReadRecords(segmentPath, 0, 10, 0)
 	if err != nil {
 		t.Fatalf("ReadRecords: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestReadRecordsAssemblesRecordAcrossPages(t *testing.T) {
 	}
 
 	reader := NewWALReader(dir)
-	records, err := reader.ReadRecords(segmentPath, 0, 10)
+	records, err := reader.ReadRecords(segmentPath, 0, 10, 0)
 	if err != nil {
 		t.Fatalf("ReadRecords: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestReadRecordsParsesBlockReferences(t *testing.T) {
 	}
 
 	reader := NewWALReader(dir)
-	records, err := reader.ReadRecords(segmentPath, 0, 10)
+	records, err := reader.ReadRecords(segmentPath, 0, 10, 0)
 	if err != nil {
 		t.Fatalf("ReadRecords: %v", err)
 	}

@@ -34,8 +34,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.PGDatabase != "postgres" {
 		t.Errorf("expected PGDatabase 'postgres', got '%s'", cfg.PGDatabase)
 	}
-	if cfg.PGDataDir != "/var/lib/postgresql/data" {
-		t.Errorf("expected PGDataDir '/var/lib/postgresql/data', got '%s'", cfg.PGDataDir)
+	if cfg.PGDataDir != "/dev_tool/docker_root/volumes/learn_pg_pg_data/_data/data" {
+		t.Errorf("expected PGDataDir '/dev_tool/docker_root/volumes/learn_pg_pg_data/_data/data', got '%s'", cfg.PGDataDir)
 	}
 	if cfg.APIPort != 3000 {
 		t.Errorf("expected APIPort 3000, got %d", cfg.APIPort)
