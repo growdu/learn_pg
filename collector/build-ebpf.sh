@@ -12,6 +12,16 @@ esac
 
 SYSROOT="$(uname -r)"
 
+# The postgres binary used for compilation determines which symbols are embedded
+# in probe.bpf.o. MUST match the runtime postgres binary exactly.
+PG_BINARY="${PG_BINARY:-/work/ai/learn_pg/collector/pg_binary/postgres}"
+
+if [ ! -f "$PG_BINARY" ]; then
+  echo "ERROR: postgres binary not found at $PG_BINARY" >&2
+  echo "Run: docker cp pgv-postgres:/usr/lib/postgresql/18/bin/postgres /work/ai/learn_pg/collector/pg_binary/postgres" >&2
+  exit 1
+fi
+
 BPF_HEADERS=""
 for dir in \
     "${BPF_INCLUDE}" \

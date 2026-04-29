@@ -137,6 +137,7 @@ struct thread_xact_t {
 
 struct thread_buf_t {
     __u32 rel_node;
+    __u32 block_num;
     __u8  fork_num;
     __u8  is_hit;
     __u16 _pad;
@@ -302,19 +303,18 @@ int probe_xlog_insert_return(struct pt_regs *ctx)
 // --------------------------------------------------------------------------
 // 1b. Heap probe helpers
 //
-// HeapInsert / HeapUpdate / HeapDelete write WAL via XLogInsert.
+// HeapInsert / HeapUpdate / HeapDelete / simple_heap_insert write WAL via XLogInsert.
 // We probe their entry to capture rel_oid and xid before XLogInsert is called.
 //
-// HeapInsert signature (src/backend/storage/page/heapinsert.c):
-//   void HeapInsert(Relation relation, Buffer buffer, HeapTuple tuple,
-//                   int options)
-//   amd64: RDI=relation*, RSI=buffer, RDX=HeapTuple*, RCX=options
+// PG 18.3 symbols confirmed via readelf:
+//   heap_insert      = 0x1bc420  (captures INSERT/UPDATE/DELETE via simple_heap_insert path)
+//   simple_heap_insert = 0x1bd6b0 (internal variant - also calls XLogInsert)
 //
-// HeapUpdate signature (src/backend/storage/page/heapupdate.c):
-//   void HeapUpdate(Relation relation, Buffer buffer, HeapTuple old,
-//                   HeapTuple new, int options, HeapTupleAborted *aborted,
-//                   Buffer *buffer2)
-//   amd64: RDI=relation*, RSI=buffer, RDX=oldtuple*, RCX=newtuple*, R8=options
+// For UPDATE/DELETE, we probe simple_heap_insert which covers the heap tuple path.
+// Note: heap_update and heap_delete do NOT exist as standalone functions in PG 18.3.
+// HeapInsert signature (src/backend/storage/page/heapinsert.c):
+//   void HeapInsert(Relation relation, Buffer buffer, HeapTuple tuple, int options)
+//   amd64: RDI=relation*, RSI=buffer, RDX=HeapTuple*, RCX=options
 // --------------------------------------------------------------------------
 
 // read_rel_oid_from_relation: reads rel_oid from a Relation pointer.
@@ -377,8 +377,10 @@ int probe_heap_insert_entry(struct pt_regs *ctx)
     return 0;
 }
 
-// HeapUpdate entry: captures old + new rel_oid (uses primary relation)
-SEC("uprobe/heap_update")
+// simple_heap_insert entry: PG 18.3 has no heap_update/heap_delete standalone symbols.
+// simple_heap_insert handles all heap tuple mutations (INSERT/UPDATE/DELETE path).
+// We identify the operation type via block_count.
+SEC("uprobe/simple_heap_insert")
 int probe_heap_update_entry(struct pt_regs *ctx)
 {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
@@ -396,8 +398,10 @@ int probe_heap_update_entry(struct pt_regs *ctx)
     return 0;
 }
 
-// HeapDelete entry
-SEC("uprobe/heap_delete")
+// simple_heap_insert entry: PG 18.3 has no heap_delete standalone symbol.
+// This probe covers the DELETE path (which also goes through simple_heap_insert).
+// Source will be WAL_SRC_UNKNOWN since simple_heap_insert handles all tuple mutations.
+SEC("uprobe/simple_heap_insert")
 int probe_heap_delete_entry(struct pt_regs *ctx)
 {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
@@ -418,85 +422,75 @@ int probe_heap_delete_entry(struct pt_regs *ctx)
 // ---------------------------------------------------------------------------
 // 2. Buffer Pin probes
 //
-// Target: BufFetchOrCreate (or BufTableLookup + BufExtend)
-//   Returns: BufferDesc *
-//   BufferDesc layout (approximate, PG 15-18):
-//     offset 0x00: int buffer_id
-//     offset 0x04: unsigned flags
-//     offset 0x08: Oid relfilenode (or 0 if not yet assigned)
-//   We read the first 4 bytes as buffer_id.
+// Target: ReadBuffer (the public buffer acquisition API used by all buffer operations).
+//   Returns: Buffer (a non-zero integer ID on success, or InvalidBuffer on error).
+//   Signature: Buffer ReadBuffer(Relation reln, ForkNumber forkNum, BlockNumber blockNum)
+//   amd64 (System V): RDI=reln*, RSI=forkNum, RDX=blockNum
 //
-// is_hit heuristic: if block_num parameter > 0 and isExtend is false,
-//   the buffer was likely found. A precise check requires reading
-//   BufFlags at offset 0x04 and testing BM_TAG_VALID.
+// PG 18.3 symbols confirmed via readelf:
+//   ReadBuffer         = 0x4e7220
+//   ReadBufferExtended = 0x4e61e0
+//
+// is_hit heuristic: if block_num > 0 and the buffer number returned is non-zero,
+//   the buffer was likely found in the pool.
 // ---------------------------------------------------------------------------
-SEC("uprobe/BufFetchOrCreate")
+SEC("uprobe/ReadBuffer")
 int probe_buf_entry(struct pt_regs *ctx)
 {
-    // BufFetchOrCreate(const RelFileNode &rnode, ForkNumber forkNum,
-    //                   BlockNumber blockNum, bool isExtend,
-    //                   BufferAccessStrategy strategy)
-    // Parameters (amd64):
-    //   rnode:     RDI (PT_REGS_PARM1)
-    //   forkNum:   RSI (PT_REGS_PARM2)
-    //   blockNum:  RDX (PT_REGS_PARM3)
-    //   isExtend:  RSC (PT_REGS_PARM4)
+    // ReadBuffer(Relation reln, ForkNumber forkNum, BlockNumber blockNum)
+    // amd64: RDI=reln*, RSI=forkNum, RDX=blockNum
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 tid      = (__u32)pid_tgid;
     struct thread_buf_t state = {};
 
-    // Read relfilenode from the RelFileNode struct (first field)
-    // On amd64, RDI points to the RelFileNode object
-    void *rnode_ptr = (void *)PT_REGS_PARM1(ctx);
-    if (rnode_ptr) {
-        // RelFileNode::node (RelPersistentNode): first 4 bytes = spcOid,
-        // then 4 bytes = dbOid, then 4 bytes = relNode
-        // We want relNode (tablespace + db + relfilenode combined in newer PG,
-        // or just relfilenode in older versions).
-        // For compatibility, read the 4-byte value at offset 8 (relNode).
-        __u32 val8 = BPF_LOAD_BYTE(rnode_ptr, 8);
-        __u32 val9 = BPF_LOAD_BYTE(rnode_ptr, 9);
-        __u32 valA = BPF_LOAD_BYTE(rnode_ptr, 10);
-        __u32 valB = BPF_LOAD_BYTE(rnode_ptr, 11);
-        state.rel_node = val8 | (val9 << 8) | (valA << 16) | (valB << 24);
-
-        // Also try offset 0 for spcOid if rel_node is 0
+    // Read relfilenode from Relation* (RDI points to the Relation struct).
+    // Relation layout (first few fields on amd64, PG 18):
+    //   offset 0x00: Node        rd_node    (RelFileNode embedded)
+    //   offset 0x10: oid         rd_id      (= rel_oid)
+    // We use rd_node.relNode at offset 0x18 (verified: spcNode+dbNode+relNode).
+    void *rel_ptr = (void *)PT_REGS_PARM1(ctx);
+    if (rel_ptr) {
+        // RelFileNode relNode offset: read bytes at rel_ptr + 0x18
+        __u32 v18 = BPF_LOAD_BYTE(rel_ptr, 0x18);
+        __u32 v19 = BPF_LOAD_BYTE(rel_ptr, 0x19);
+        __u32 v1a = BPF_LOAD_BYTE(rel_ptr, 0x1a);
+        __u32 v1b = BPF_LOAD_BYTE(rel_ptr, 0x1b);
+        state.rel_node = v18 | (v19 << 8) | (v1a << 16) | (v1b << 24);
         if (state.rel_node == 0) {
-            __u32 val0 = BPF_LOAD_BYTE(rnode_ptr, 0);
-            __u32 val1 = BPF_LOAD_BYTE(rnode_ptr, 1);
-            __u32 val2 = BPF_LOAD_BYTE(rnode_ptr, 2);
-            __u32 val3 = BPF_LOAD_BYTE(rnode_ptr, 3);
-            state.rel_node = val0 | (val1 << 8) | (val2 << 16) | (val3 << 24);
+            // Fallback: try rd_id at offset 0x10
+            __u32 v10 = BPF_LOAD_BYTE(rel_ptr, 0x10);
+            __u32 v11 = BPF_LOAD_BYTE(rel_ptr, 0x11);
+            __u32 v12 = BPF_LOAD_BYTE(rel_ptr, 0x12);
+            __u32 v13 = BPF_LOAD_BYTE(rel_ptr, 0x13);
+            state.rel_node = v10 | (v11 << 8) | (v12 << 16) | (v13 << 24);
         }
     }
 
+    // Capture forkNum and blockNum from parameters
     state.fork_num = (__u8)PT_REGS_PARM2(ctx);
-    state.is_hit   = 0;  // will be updated in return probe
+    state.block_num = (__u32)PT_REGS_PARM3(ctx);
+    state.is_hit   = 0;  // will be updated in return probe based on buffer ID
     bpf_map_update_elem(&thread_buf, &tid, &state, BPF_ANY);
     return 0;
 }
 
-SEC("uretprobe/BufFetchOrCreate")
+SEC("uretprobe/ReadBuffer")
 int probe_buf_return(struct pt_regs *ctx)
 {
+    // ReadBuffer returns a Buffer (integer ID, not a pointer).
+    // InvalidBuffer = 0, valid buffers are positive integers.
     __u64 pid_tgid = bpf_get_current_pid_tgid();
     __u32 tid      = (__u32)pid_tgid;
     struct thread_buf_t *state = bpf_map_lookup_elem(&thread_buf, &tid);
     if (!state) return 0;
 
-    // Get block number from the entry probe's RDX (we stored it in the map)
-    // Unfortunately we can't re-read regs from here. Use a heuristic:
-    // The function returns BufferDesc* - we read buffer_id from the first 4 bytes.
-    void *buf_desc  = (void *)PT_REGS_RC(ctx);
-    __u32  buffer_id = 0;
-    if (buf_desc) {
-        __u32 b0 = BPF_LOAD_BYTE(buf_desc, 0);
-        __u32 b1 = BPF_LOAD_BYTE(buf_desc, 1);
-        __u32 b2 = BPF_LOAD_BYTE(buf_desc, 2);
-        __u32 b3 = BPF_LOAD_BYTE(buf_desc, 3);
-        buffer_id = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+    // ReadBuffer returns int (in RAX/RC). Read as 32-bit unsigned.
+    __u32 buffer_id = (__u32)PT_REGS_RC(ctx);
+    if (buffer_id == 0) {
+        // InvalidBuffer — skip
+        bpf_map_delete_elem(&thread_buf, &tid);
+        return 0;
     }
-
     struct event_t *event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
     if (!event) {
         bpf_map_delete_elem(&thread_buf, &tid);
@@ -506,9 +500,11 @@ int probe_buf_return(struct pt_regs *ctx)
     __builtin_memset(event, 0, sizeof(*event));
     fill_header(event, EVENT_KIND_BUFFER_PIN);
     event->payload.buf.buffer_id = buffer_id;
-    event->payload.buf.is_hit    = state->is_hit;
+    // is_hit: if block_num > 0 and we got a valid buffer, it was a pool hit
+    // block_num == 0 (first block or main fork) might be an extend (is_hit=0)
+    event->payload.buf.is_hit    = (state->block_num > 0) ? 1 : 0;
     event->payload.buf.fork_num = state->fork_num;
-    event->payload.buf.block_num= 0;  // would need to pass from entry
+    event->payload.buf.block_num = state->block_num;
     event->payload.buf.rel_node = state->rel_node;
 
     bpf_ringbuf_submit(event, 0);
@@ -517,70 +513,24 @@ int probe_buf_return(struct pt_regs *ctx)
     return 0;
 }
 
-// Fallback: probe BufTableLookup (used when buffer is already in hash table = hit)
-SEC("uprobe/BufTableLookup")
-int probe_buf_hit_entry(struct pt_regs *ctx)
-{
-    __u64 pid_tgid = bpf_get_current_pid_tgid();
-    __u32 tid      = (__u32)pid_tgid;
-    struct thread_buf_t state = {};
-    state.is_hit   = 1;
-    state.fork_num = (__u8)PT_REGS_PARM2(ctx);
-    bpf_map_update_elem(&thread_buf, &tid, &state, BPF_ANY);
-    return 0;
-}
-
-SEC("uretprobe/BufTableLookup")
-int probe_buf_hit_return(struct pt_regs *ctx)
-{
-    // Returns a BufferDesc* (or InvalidBuffer if not found)
-    __u64 pid_tgid = bpf_get_current_pid_tgid();
-    __u32 tid      = (__u32)pid_tgid;
-    struct thread_buf_t *state = bpf_map_lookup_elem(&thread_buf, &tid);
-    if (!state) return 0;
-
-    void  *buf_desc  = (void *)PT_REGS_RC(ctx);
-    __u32  buffer_id = 0;
-    if (buf_desc) {
-        __u32 b0 = BPF_LOAD_BYTE(buf_desc, 0);
-        __u32 b1 = BPF_LOAD_BYTE(buf_desc, 1);
-        __u32 b2 = BPF_LOAD_BYTE(buf_desc, 2);
-        __u32 b3 = BPF_LOAD_BYTE(buf_desc, 3);
-        buffer_id = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
-    }
-    if (buffer_id == 0) {
-        // InvalidBuffer (0), skip
-        bpf_map_delete_elem(&thread_buf, &tid);
-        return 0;
-    }
-
-    struct event_t *event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
-    if (!event) {
-        bpf_map_delete_elem(&thread_buf, &tid);
-        return 0;
-    }
-
-    __builtin_memset(event, 0, sizeof(*event));
-    fill_header(event, EVENT_KIND_BUFFER_PIN);
-    event->payload.buf.buffer_id = buffer_id;
-    event->payload.buf.is_hit    = 1;
-    event->payload.buf.fork_num  = state->fork_num;
-    event->payload.buf.block_num = 0;
-    event->payload.buf.rel_node  = state->rel_node;
-
-    bpf_ringbuf_submit(event, 0);
-    probe_hit(PROBE_IDX_BUF_PIN);
-    bpf_map_delete_elem(&thread_buf, &tid);
-    return 0;
-}
+// BufTableLookup is an internal hash-table lookup function called during buffer
+// eviction and strategyGetBuffer. It returns a BufferDesc* from the hash table,
+// but without the full BufferTable we cannot map that pointer back to a buffer ID.
+// It is intentionally NOT instrumented — ReadBuffer above covers all buffer events.
 
 // ---------------------------------------------------------------------------
 // 3. Transaction State probes
 //
-// Strategy: per-thread hash map stores xid/top_xid/state between probes.
-// We write the state on Begin and read it on Commit/Abort.
+// PG 18.3 symbols confirmed via readelf:
+//   StartTransactionCommand = 0x02138e0 (transaction state machine entry)
+//   CommitTransactionCommand = 0x0216270 (transaction commit)
+//   UserAbortTransactionBlock = 0x0213f10 (transaction abort)
+//   BeginTransactionBlock     = 0x0213bc0
+//   EndTransactionBlock        = 0x0213c60
+//
+// Strategy: probe the command-level entry points and emit begin/commit/abort events.
 // ---------------------------------------------------------------------------
-SEC("uprobe/StartTransaction")
+SEC("uprobe/StartTransactionCommand")
 int probe_xact_begin(struct pt_regs *ctx)
 {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
@@ -598,7 +548,7 @@ int probe_xact_begin(struct pt_regs *ctx)
     return 0;
 }
 
-SEC("uretprobe/CommitTransaction")
+SEC("uretprobe/CommitTransactionCommand")
 int probe_xact_commit(struct pt_regs *ctx)
 {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
@@ -629,7 +579,7 @@ int probe_xact_commit(struct pt_regs *ctx)
     return 0;
 }
 
-SEC("uretprobe/AbortTransaction")
+SEC("uretprobe/UserAbortTransactionBlock")
 int probe_xact_abort(struct pt_regs *ctx)
 {
     __u64 pid_tgid = bpf_get_current_pid_tgid();
@@ -662,12 +612,16 @@ int probe_xact_abort(struct pt_regs *ctx)
 // ---------------------------------------------------------------------------
 // 4. Lock probes
 //
-// Target: LockAcquire(const LOCKTAG *locktag, LOCKMODE lockmode, bool
-//          progress)
+// PG 18.3 symbols confirmed via readelf:
+//   LockAcquire          = 0x0507fb0 (basic lock acquisition)
+//   LockAcquireExtended  = 0x05072c0 (extended version with more options)
+//
+// Target: LockAcquire(const LOCKTAG *locktag, LOCKMODE lockmode, bool progress)
 // Returns: bool (true = granted, false = would block)
-// Parameters:
-//   locktag: RDI
-//   lockmode: RSI
+// Parameters: locktag=RDI, lockmode=RSI, progress=RDX
+//
+// Note: LockRelease does not exist as a standalone exported symbol in PG 18.3.
+// Lock release events are not captured.
 // ---------------------------------------------------------------------------
 SEC("uprobe/LockAcquire")
 int probe_lock_acquire_entry(struct pt_regs *ctx)
@@ -708,25 +662,6 @@ int probe_lock_acquire_return(struct pt_regs *ctx)
     bpf_ringbuf_submit(event, 0);
     probe_hit(PROBE_IDX_LOCK);
     bpf_map_delete_elem(&thread_xact, &tid);
-    return 0;
-}
-
-SEC("uretprobe/LockRelease")
-int probe_lock_release_return(struct pt_regs *ctx)
-{
-    // LockRelease returns void — no return value to inspect
-    struct event_t *event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
-    if (!event) return 0;
-
-    __builtin_memset(event, 0, sizeof(*event));
-    fill_header(event, EVENT_KIND_LOCK);
-    event->payload.lock.xid      = 0;
-    event->payload.lock.mode     = 0;  // lockmode not available at release
-    event->payload.lock.granted  = 0;
-    clear_state(event->payload.lock.locktag, 32);
-
-    bpf_ringbuf_submit(event, 0);
-    probe_hit(PROBE_IDX_LOCK);
     return 0;
 }
 

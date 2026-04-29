@@ -11,6 +11,10 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /app
 
 # Cilium headers not needed — BPF object is pre-built on the host.
+# The postgres binary must match the target postgres:18 container exactly.
+
+COPY pg_binary/ /usr/lib/postgresql/18/bin/
+RUN chmod +x /usr/lib/postgresql/18/bin/postgres
 
 COPY Cargo.toml Cargo.lock ./
 COPY src/ ./src/
@@ -25,5 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY --from=0 /app/target/release/pg-collector /app/pg-collector
 COPY --from=0 /app/probes/probe.bpf.o /app/probes/probe.bpf.o
+# postgres binary is needed at runtime for symbol resolution in uprobes
+COPY --from=0 /usr/lib/postgresql/18/bin/postgres /usr/lib/postgresql/18/bin/postgres
 
 CMD ["/app/pg-collector"]

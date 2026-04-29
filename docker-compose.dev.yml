@@ -65,14 +65,13 @@ services:
     container_name: pgv-collector
     environment:
       # network_mode=host 时，必须通过 host.docker.internal 访问宿主机端口
-      # 注意：backend 在宿主机端口 3010 暴露
-      BACKEND_WS_URL: ws://host.docker.internal:3010/ws
+      # 注意：backend 在宿主机端口 3000 暴露
+      BACKEND_WS_URL: ws://host.docker.internal:3000/ws
       COLLECTOR_PORT: 8090
       PG_DATA_DIR: /var/lib/postgresql/data
       USE_EBPF: "true"
       BPF_OBJECT_PATH: /app/probes/probe.bpf.o
       POSTGRES_BIN: /usr/lib/postgresql/18/bin/postgres
-      POSTGRES_PID: "987291"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     network_mode: host

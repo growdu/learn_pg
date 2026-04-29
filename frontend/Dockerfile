@@ -41,6 +41,7 @@ RUN printf '%s\n' \
     '        try_files $uri $uri/ /index.html;' \
     '    }' \
     '    location /api/ {' \
+    '        resolver 127.0.0.11 valid=30s ipv6=off;' \
     '        proxy_pass http://pgv-backend:3000;' \
     '        proxy_set_header Host $host;' \
     '        proxy_set_header X-Real-IP $remote_addr;' \
@@ -48,6 +49,7 @@ RUN printf '%s\n' \
     '        proxy_set_header X-Forwarded-Proto $scheme;' \
     '    }' \
     '    location /ws/ {' \
+    '        resolver 127.0.0.11 valid=30s ipv6=off;' \
     '        proxy_pass http://pgv-backend:3000/ws;' \
     '        proxy_http_version 1.1;' \
     '        proxy_set_header Upgrade $http_upgrade;' \
@@ -59,6 +61,7 @@ RUN printf '%s\n' \
     '        proxy_read_timeout 86400;' \
     '    }' \
     '    location /ws {' \
+    '        resolver 127.0.0.11 valid=30s ipv6=off;' \
     '        proxy_pass http://pgv-backend:3000;' \
     '        proxy_http_version 1.1;' \
     '        proxy_set_header Upgrade $http_upgrade;' \

@@ -76,9 +76,7 @@ services:
       retries: 3
 
   collector:
-    build:
-      context: ./collector
-      dockerfile: Dockerfile
+    image: pg-collector:fix
     container_name: pgv-collector
     environment:
       # network_mode=host 时，必须通过 host.docker.internal 访问宿主机端口。

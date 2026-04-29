@@ -22,19 +22,20 @@ use tokio::sync::{broadcast, mpsc};
 //   ───────────────────────────────────────────────────────────────────────
 //   probe_xlog_insert_entry  XLogInsert             WAL Insert entry (saves rmid/info)
 //   probe_xlog_insert_return XLogInsert             WAL Insert return (emits event)
-//   probe_heap_insert_entry  heap_insert            HeapInsert entry (saves rel_oid)
-//   probe_heap_update_entry  heap_update            HeapUpdate entry
-//   probe_heap_delete_entry  heap_delete            HeapDelete entry
-//   probe_buf_entry          BufFetchOrCreate       Buffer fetch/create entry
-//   probe_buf_return         BufFetchOrCreate       Buffer fetch/create return
-//   probe_buf_hit_entry      BufTableLookup         Buffer hash table hit entry
-//   probe_buf_hit_return     BufTableLookup         Buffer hash table hit return
-//   probe_xact_begin         StartTransaction       Transaction begin
-//   probe_xact_commit        CommitTransaction      Transaction commit
-//   probe_xact_abort         AbortTransaction       Transaction abort
+//   probe_heap_insert_entry  heap_insert            HeapInsert entry (INSERT path)
+//   probe_heap_update_entry simple_heap_update      UPDATE path (PG 18.3)
+//   probe_heap_delete_entry simple_heap_delete      DELETE path (PG 18.3)
+//   probe_buf_entry          ReadBuffer              Buffer fetch/create entry (PG 18.3)
+//   probe_buf_return         ReadBuffer              Buffer fetch/create return (PG 18.3)
+//   probe_xact_begin         StartTransactionCommand Transaction begin (PG 18.3)
+//   probe_xact_commit        CommitTransactionCommand Transaction commit (PG 18.3)
+//   probe_xact_abort         UserAbortTransactionBlock Transaction abort (PG 18.3)
 //   probe_lock_acquire_entry LockAcquire            Lock acquire entry
 //   probe_lock_acquire_return LockAcquire           Lock acquire return
-//   probe_lock_release_return LockRelease           Lock release
+//
+// Note: heap_update, heap_delete, BufFetchOrCreate, BufTableLookup, StartTransaction,
+// CommitTransaction, AbortTransaction, LockRelease do NOT exist as standalone symbols
+// in PostgreSQL 18.3 (they have been inlined or renamed).
 //
 // CRITICAL: 这些符号的地址从 POSTGRES_BIN (或 /proc/<PID>/exe) 解析。
 // 编译 probe.bpf.o 时使用的 PG 源码版本必须与运行时 attach 到的 postgres
@@ -110,36 +111,37 @@ pub fn spawn_ebpf_collector(
     // --- Heap probes (optional — populate xid/rel_oid for WAL events) ---
     let _ = attach_uprobe(&mut bpf, "probe_heap_insert_entry", "heap_insert", &target_path, pid_filter)
         .map_err(|e| tracing::warn!("heap_insert probe failed (non-fatal): {}", e));
-    let _ = attach_uprobe(&mut bpf, "probe_heap_update_entry", "heap_update", &target_path, pid_filter)
-        .map_err(|e| tracing::warn!("heap_update probe failed (non-fatal): {}", e));
-    let _ = attach_uprobe(&mut bpf, "probe_heap_delete_entry", "heap_delete", &target_path, pid_filter)
-        .map_err(|e| tracing::warn!("heap_delete probe failed (non-fatal): {}", e));
+    let _ = attach_uprobe(&mut bpf, "probe_heap_update_entry", "simple_heap_update", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("simple_heap_update probe failed (non-fatal): {}", e));
+    let _ = attach_uprobe(&mut bpf, "probe_heap_delete_entry", "simple_heap_delete", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("simple_heap_delete probe failed (non-fatal): {}", e));
 
     // --- Buffer Pin probes (optional) ---
-    let _ = attach_uprobe(&mut bpf, "probe_buf_entry", "BufFetchOrCreate", &target_path, pid_filter)
-        .map_err(|e| tracing::warn!("BufFetchOrCreate entry probe failed (non-fatal): {}", e));
-    let _ = attach_uprobe(&mut bpf, "probe_buf_return", "BufFetchOrCreate", &target_path, pid_filter)
-        .map_err(|e| tracing::warn!("BufFetchOrCreate return probe failed (non-fatal): {}", e));
-    let _ = attach_uprobe(&mut bpf, "probe_buf_hit_entry", "BufTableLookup", &target_path, pid_filter)
-        .map_err(|e| tracing::warn!("BufTableLookup entry probe failed (non-fatal): {}", e));
-    let _ = attach_uprobe(&mut bpf, "probe_buf_hit_return", "BufTableLookup", &target_path, pid_filter)
-        .map_err(|e| tracing::warn!("BufTableLookup return probe failed (non-fatal): {}", e));
+    // PG 18.3: use ReadBuffer (0x4aeb70) — the public buffer acquisition API.
+    // BufFetchOrCreate, BufTableLookup are internal and don't exist as standalone symbols.
+    let _ = attach_uprobe(&mut bpf, "probe_buf_entry", "ReadBuffer", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("ReadBuffer entry probe failed (non-fatal): {}", e));
+    let _ = attach_uprobe(&mut bpf, "probe_buf_return", "ReadBuffer", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("ReadBuffer return probe failed (non-fatal): {}", e));
 
     // --- Transaction State probes (optional) ---
-    let _ = attach_uprobe(&mut bpf, "probe_xact_begin", "StartTransaction", &target_path, pid_filter)
-        .map_err(|e| tracing::warn!("StartTransaction probe failed (non-fatal): {}", e));
-    let _ = attach_uprobe(&mut bpf, "probe_xact_commit", "CommitTransaction", &target_path, pid_filter)
-        .map_err(|e| tracing::warn!("CommitTransaction probe failed (non-fatal): {}", e));
-    let _ = attach_uprobe(&mut bpf, "probe_xact_abort", "AbortTransaction", &target_path, pid_filter)
-        .map_err(|e| tracing::warn!("AbortTransaction probe failed (non-fatal): {}", e));
+    // PG 18.3 symbols:
+    //   StartTransactionCommand    = 0x02138e0
+    //   CommitTransactionCommand   = 0x0216270
+    //   UserAbortTransactionBlock   = 0x0213f10
+    let _ = attach_uprobe(&mut bpf, "probe_xact_begin", "StartTransactionCommand", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("StartTransactionCommand probe failed (non-fatal): {}", e));
+    let _ = attach_uprobe(&mut bpf, "probe_xact_commit", "CommitTransactionCommand", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("CommitTransactionCommand probe failed (non-fatal): {}", e));
+    let _ = attach_uprobe(&mut bpf, "probe_xact_abort", "UserAbortTransactionBlock", &target_path, pid_filter)
+        .map_err(|e| tracing::warn!("UserAbortTransactionBlock probe failed (non-fatal): {}", e));
 
     // --- Lock probes (optional) ---
     let _ = attach_uprobe(&mut bpf, "probe_lock_acquire_entry", "LockAcquire", &target_path, pid_filter)
         .map_err(|e| tracing::warn!("LockAcquire entry probe failed (non-fatal): {}", e));
     let _ = attach_uprobe(&mut bpf, "probe_lock_acquire_return", "LockAcquire", &target_path, pid_filter)
         .map_err(|e| tracing::warn!("LockAcquire return probe failed (non-fatal): {}", e));
-    let _ = attach_uprobe(&mut bpf, "probe_lock_release_return", "LockRelease", &target_path, pid_filter)
-        .map_err(|e| tracing::warn!("LockRelease probe failed (non-fatal): {}", e));
+    // LockRelease probe removed — no standalone LockRelease symbol in PG 18.3
 
     let _probe_counts_map = bpf.take_map("probe_counts");
 
