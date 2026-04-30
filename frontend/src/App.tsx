@@ -28,6 +28,24 @@ function App() {
   const { connected: wsConnected } = useWebSocket()
   const { buffers, collectorMode, eventCount, lastEventType, transactions, writeStages } = useVisualizationData()
 
+  useEffect(() => {
+    if (storeConnected) setConnected(true)
+    if (storeVersion) setPgVersion(storeVersion)
+  }, [storeConnected, storeVersion])
+
+  useEffect(() => {
+    const handler = (evt: Event) => {
+      const custom = evt as CustomEvent<{ view?: View }>
+      const targetView = custom.detail?.view || 'home'
+      setConnected(true)
+      setCurrentView(targetView)
+      const latestVersion = usePGStore.getState().version
+      if (latestVersion) setPgVersion(latestVersion)
+    }
+    window.addEventListener('pgv-node-activated', handler)
+    return () => window.removeEventListener('pgv-node-activated', handler)
+  }, [])
+
   const renderView = () => {
     switch (currentView) {
       case 'wal':
@@ -82,20 +100,3 @@ function App() {
 }
 
 export default App
-  useEffect(() => {
-    if (storeConnected) setConnected(true)
-    if (storeVersion) setPgVersion(storeVersion)
-  }, [storeConnected, storeVersion])
-
-  useEffect(() => {
-    const handler = (evt: Event) => {
-      const custom = evt as CustomEvent<{ view?: View }>
-      const targetView = custom.detail?.view || 'home'
-      setConnected(true)
-      setCurrentView(targetView)
-      const latestVersion = usePGStore.getState().version
-      if (latestVersion) setPgVersion(latestVersion)
-    }
-    window.addEventListener('pgv-node-activated', handler)
-    return () => window.removeEventListener('pgv-node-activated', handler)
-  }, [])

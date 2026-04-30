@@ -24,7 +24,7 @@ export const usePGStore = create<PGState>((set) => ({
   version: '',
   dataDir: '',
   config: {
-    host: 'localhost',
+    host: 'pgv-postgres',
     port: 5432,
     user: 'postgres',
     password: 'postgres',

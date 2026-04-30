@@ -22,7 +22,7 @@ function loadProfiles(): ConnectionProfile[] {
     {
       id: 'default',
       name: 'Local PostgreSQL',
-      host: 'localhost',
+      host: 'pgv-postgres',
       port: 5432,
       user: 'postgres',
       password: 'postgres',
@@ -99,7 +99,7 @@ export default function ConnectionManager({ onConnect, onVersion }: Props) {
   const handleSaveProfile = () => {
     if (!editingProfile?.name || !editingProfile?.host) return
     const profile: ConnectionProfile = {
-      id: editingProfile.id || crypto.randomUUID(),
+      id: editingProfile.id || (crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)),
       name: editingProfile.name,
       host: editingProfile.host || 'localhost',
       port: editingProfile.port || 5432,
@@ -126,7 +126,8 @@ export default function ConnectionManager({ onConnect, onVersion }: Props) {
   }
 
   const startAdd = () => {
-    setEditingProfile({ host: 'localhost', port: 5432, user: 'postgres', password: '', database: 'postgres' })
+    const cfg = usePGStore.getState().config
+    setEditingProfile({ host: cfg.host, port: cfg.port, user: cfg.user, password: '', database: cfg.database })
     setIsEditing(true)
   }
 

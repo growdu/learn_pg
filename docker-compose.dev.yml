@@ -94,21 +94,16 @@ services:
     profiles:
       - "linux-only"
 
-  # 前端（开发模式）
+  # 前端（使用预编译的 dist + nginx）
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.dev
+    image: docker.m.daocloud.io/library/nginx:alpine
     container_name: pgv-frontend
     network_mode: host
-    environment:
-      VITE_API_URL: http://localhost:3010
-      VITE_WS_URL: ws://localhost:3010/ws
-    ports:
-      - "5174:5173"
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - backend
-    command: ["pnpm", "dev", "--host"]
 
 volumes:
   pg_data:

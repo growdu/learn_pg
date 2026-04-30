@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { usePGStore } from '../../stores/pgStore'
 import type { ClusterNodeConfig, ClusterNodeStatus, ClusterOverviewResponse, ClusterType } from '../../types/cluster'
 
+const genId = () => crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)
+
 const STORAGE_KEY = 'pgv_cluster_nodes'
 
 function loadNodes(defaultNode: ClusterNodeConfig): ClusterNodeConfig[] {
@@ -24,7 +26,7 @@ function saveNodes(nodes: ClusterNodeConfig[]) {
 function makeDefaultNode(): ClusterNodeConfig {
   const cfg = usePGStore.getState().config
   return {
-    id: crypto.randomUUID(),
+    id: genId(),
     name: 'Node 1',
     host: cfg.host,
     port: cfg.port,
@@ -72,7 +74,7 @@ export default function ClusterView() {
     const idx = nodes.length + 1
     const cfg = usePGStore.getState().config
     const node: ClusterNodeConfig = {
-      id: crypto.randomUUID(),
+      id: genId(),
       name: `Node ${idx}`,
       host: cfg.host,
       port: cfg.port,
