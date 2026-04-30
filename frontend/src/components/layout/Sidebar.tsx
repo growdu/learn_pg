@@ -1,88 +1,57 @@
+﻿import type { CSSProperties, ReactNode } from 'react'
 import type { View } from '../../App'
-import type { CSSProperties } from 'react'
 
 interface SidebarProps {
   currentView: View
   onNavigate: (view: View) => void
+  projectActive: boolean
   nodeActive: boolean
   nodeLabel: string
 }
 
-const clusterNavItems: { key: View; label: string }[] = [
-  { key: 'cluster', label: '集群主页' },
-]
-
-const nodeGroups: { title: string; items: { key: View; label: string }[] }[] = [
-  {
-    title: '节点核心观测',
-    items: [
-      { key: 'node_home', label: '节点主页' },
-      { key: 'sql', label: 'SQL 控制台' },
-      { key: 'wal', label: 'WAL 查看' },
-      { key: 'clog', label: 'CLOG 查看' },
-      { key: 'lock', label: '锁等待图' },
-      { key: 'xact_state', label: '事务状态机' },
-      { key: 'memory', label: '内存结构' },
-    ],
-  },
-  {
-    title: '节点流水线',
-    items: [
-      { key: 'write', label: '写入流水线' },
-      { key: 'read', label: '读取流水线' },
-      { key: 'transaction', label: '事务流水线' },
-      { key: 'plan', label: '执行计划树' },
-      { key: 'buffer', label: 'Buffer 热图' },
-    ],
-  },
-]
-
-export default function Sidebar({ currentView, onNavigate, nodeActive, nodeLabel }: SidebarProps) {
-
+export default function Sidebar({ currentView, onNavigate, projectActive, nodeActive, nodeLabel }: SidebarProps) {
   return (
-    <aside style={{
-      width: '220px',
-      background: 'var(--bg-secondary)',
-      borderRight: '1px solid var(--border)',
-      padding: '1rem 0',
-      overflowY: 'auto',
-    }}>
-      <div style={{ marginBottom: '0.75rem' }}>
-        <div style={{ padding: '0.25rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-          集群
-        </div>
-        {clusterNavItems.map((item) => (
-          <button key={item.key} onClick={() => onNavigate(item.key)} style={navButtonStyle(currentView === item.key)}>
-            {item.label}
-          </button>
-        ))}
-      </div>
+    <aside style={{ width: '230px', background: 'var(--bg-secondary)', borderRight: '1px solid var(--border)', padding: '1rem 0', overflowY: 'auto' }}>
+      <Section title="项目层">
+        <NavBtn label="项目主页" active={currentView === 'project_home'} onClick={() => onNavigate('project_home')} />
+        <NavBtn label="集群主页" active={currentView === 'cluster_home'} onClick={() => onNavigate('cluster_home')} disabled={!projectActive} />
+        <NavBtn label="组件主页" active={currentView === 'component_home'} onClick={() => onNavigate('component_home')} disabled={!projectActive} />
+      </Section>
 
       <div style={{ marginBottom: '0.75rem', padding: '0 1rem' }}>
         <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>当前节点</div>
         <div style={{ fontSize: '0.78rem', color: nodeActive ? 'var(--green)' : 'var(--text-muted)', marginTop: '0.15rem' }}>
-          {nodeActive ? nodeLabel : '未选择'}
+          {nodeActive ? nodeLabel : '未激活'}
         </div>
       </div>
 
-      {nodeGroups.map((group) => (
-        <div key={group.title} style={{ marginBottom: '0.75rem' }}>
-          <div style={{ padding: '0.25rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            {group.title}
-          </div>
-          {group.items.map((item) => (
-            <button
-              key={item.key}
-              onClick={() => onNavigate(item.key)}
-              disabled={!nodeActive}
-              style={navButtonStyle(currentView === item.key, !nodeActive)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      ))}
+      <Section title="节点层">
+        <NavBtn label="节点主页" active={currentView === 'node_home'} onClick={() => onNavigate('node_home')} disabled={!nodeActive} />
+        <NavBtn label="SQL 控制台" active={currentView === 'sql'} onClick={() => onNavigate('sql')} disabled={!nodeActive} />
+        <NavBtn label="WAL 查看" active={currentView === 'wal'} onClick={() => onNavigate('wal')} disabled={!nodeActive} />
+        <NavBtn label="CLOG 查看" active={currentView === 'clog'} onClick={() => onNavigate('clog')} disabled={!nodeActive} />
+        <NavBtn label="锁等待图" active={currentView === 'lock'} onClick={() => onNavigate('lock')} disabled={!nodeActive} />
+        <NavBtn label="事务状态机" active={currentView === 'xact_state'} onClick={() => onNavigate('xact_state')} disabled={!nodeActive} />
+        <NavBtn label="内存结构" active={currentView === 'memory'} onClick={() => onNavigate('memory')} disabled={!nodeActive} />
+      </Section>
     </aside>
+  )
+}
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div style={{ marginBottom: '0.75rem' }}>
+      <div style={{ padding: '0.25rem 1rem', fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{title}</div>
+      {children}
+    </div>
+  )
+}
+
+function NavBtn({ label, active, onClick, disabled = false }: { label: string; active: boolean; onClick: () => void; disabled?: boolean }) {
+  return (
+    <button onClick={onClick} disabled={disabled} style={navButtonStyle(active, disabled)}>
+      {label}
+    </button>
   )
 }
 
@@ -101,3 +70,4 @@ function navButtonStyle(active: boolean, disabled = false): CSSProperties {
     opacity: disabled ? 0.6 : 1,
   }
 }
+
