@@ -6,6 +6,17 @@ const genId = () => crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)
 
 const STORAGE_KEY = 'pgv_cluster_nodes'
 
+const ROLE_OPTIONS_BY_TYPE: Record<ClusterType, { label: string; value: string }[]> = {
+  physical: [
+    { label: '物理主节点 (Primary)', value: 'primary' },
+    { label: '物理从节点 (Standby)', value: 'standby' },
+  ],
+  logical: [
+    { label: '逻辑发布端 (Publisher)', value: 'publisher' },
+    { label: '逻辑订阅端 (Subscriber)', value: 'subscriber' },
+  ],
+}
+
 function loadNodes(defaultNode: ClusterNodeConfig): ClusterNodeConfig[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -55,9 +66,9 @@ export default function ClusterView() {
 
   useEffect(() => {
     const onActivateRequest = (evt: Event) => {
-      const custom = evt as CustomEvent<{ node?: ClusterNodeConfig; view?: 'home' | 'wal' | 'clog' | 'memory' }>
+      const custom = evt as CustomEvent<{ node?: ClusterNodeConfig; view?: 'node_home' | 'sql' | 'wal' | 'clog' | 'memory' }>
       if (custom.detail?.node) {
-        void activateNode(custom.detail.node, custom.detail.view || 'home')
+        void activateNode(custom.detail.node, custom.detail.view || 'node_home')
       }
     }
     window.addEventListener('pgv-activate-request', onActivateRequest)
@@ -66,6 +77,17 @@ export default function ClusterView() {
 
   const updateNode = (id: string, patch: Partial<ClusterNodeConfig>) => {
     const next = nodes.map((node) => (node.id === id ? { ...node, ...patch } : node))
+    setNodes(next)
+    saveNodes(next)
+  }
+
+  const updateNodeType = (id: string, clusterType: ClusterType) => {
+    const next = nodes.map((node) => {
+      if (node.id !== id) return node
+      const validRoles = ROLE_OPTIONS_BY_TYPE[clusterType].map((r) => r.value)
+      const role = validRoles.includes(node.role) ? node.role : validRoles[0]
+      return { ...node, cluster_type: clusterType, role }
+    })
     setNodes(next)
     saveNodes(next)
   }
@@ -124,7 +146,7 @@ export default function ClusterView() {
     }
   }
 
-  const activateNode = async (node: ClusterNodeConfig, targetView: 'home' | 'wal' | 'clog' | 'memory' = 'home') => {
+  const activateNode = async (node: ClusterNodeConfig, targetView: 'node_home' | 'sql' | 'wal' | 'clog' | 'memory' = 'node_home') => {
     setActivating(true)
     setError('')
     try {
@@ -187,55 +209,75 @@ export default function ClusterView() {
     <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
       <div style={{ width: '420px', borderRight: '1px solid var(--border)', padding: '1rem', overflowY: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-          <h2 style={{ margin: 0, fontSize: '1rem' }}>Cluster Nodes</h2>
-          <button onClick={addNode} style={btnSecondary}>+ Node</button>
+          <h2 style={{ margin: 0, fontSize: '1rem' }}>闆嗙兢鑺傜偣绠＄悊</h2>
+          <button onClick={addNode} style={btnSecondary}>+ 娣诲姞鑺傜偣</button>
         </div>
+        <div style={{ marginBottom: '0.75rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+          鏀寔娣诲姞鍜岀Щ闄よ妭鐐广€傝嚦灏戜繚鐣?1 涓妭鐐癸紱鍙湪姣忎釜鑺傜偣鎵ц婵€娲讳笌瑙傛祴銆?        </div>
         {nodes.map((node) => (
           <div key={node.id} style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '0.75rem', marginBottom: '0.75rem' }}>
-            <input value={node.name} onChange={(e) => updateNode(node.id, { name: e.target.value })} style={inputStyle} placeholder="Node Name" />
+            <input value={node.name} onChange={(e) => updateNode(node.id, { name: e.target.value })} style={inputStyle} placeholder="鑺傜偣鍚嶇О" />
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 88px', gap: '0.5rem', marginTop: '0.5rem' }}>
-              <input value={node.host} onChange={(e) => updateNode(node.id, { host: e.target.value })} style={inputStyle} placeholder="Host" />
+              <input value={node.host} onChange={(e) => updateNode(node.id, { host: e.target.value })} style={inputStyle} placeholder="涓绘満" />
               <input type="number" value={node.port} onChange={(e) => updateNode(node.id, { port: Number(e.target.value) })} style={inputStyle} />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
-              <input value={node.user} onChange={(e) => updateNode(node.id, { user: e.target.value })} style={inputStyle} placeholder="User" />
-              <input type="password" value={node.password} onChange={(e) => updateNode(node.id, { password: e.target.value })} style={inputStyle} placeholder="Password" />
+              <input value={node.user} onChange={(e) => updateNode(node.id, { user: e.target.value })} style={inputStyle} placeholder="鐢ㄦ埛" />
+              <input type="password" value={node.password} onChange={(e) => updateNode(node.id, { password: e.target.value })} style={inputStyle} placeholder="瀵嗙爜" />
             </div>
-            <input value={node.database} onChange={(e) => updateNode(node.id, { database: e.target.value })} style={{ ...inputStyle, marginTop: '0.5rem' }} placeholder="Database" />
+            <input value={node.database} onChange={(e) => updateNode(node.id, { database: e.target.value })} style={{ ...inputStyle, marginTop: '0.5rem' }} placeholder="鏁版嵁搴? />
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
-              <select value={node.cluster_type} onChange={(e) => updateNode(node.id, { cluster_type: e.target.value as ClusterType })} style={inputStyle}>
-                <option value="physical">physical</option>
-                <option value="logical">logical</option>
+              <select value={node.cluster_type} onChange={(e) => updateNodeType(node.id, e.target.value as ClusterType)} style={inputStyle}>
+                <option value="physical">物理复制 (physical)</option>
+                <option value="logical">逻辑复制 (logical)</option>
               </select>
-              <input value={node.role} onChange={(e) => updateNode(node.id, { role: e.target.value })} style={inputStyle} placeholder="Role" />
+              <select
+                value={ROLE_OPTIONS_BY_TYPE[node.cluster_type].some((r) => r.value === node.role) ? node.role : '__custom__'}
+                onChange={(e) => {
+                  const v = e.target.value
+                  if (v !== '__custom__') updateNode(node.id, { role: v })
+                }}
+                style={inputStyle}
+              >
+                {ROLE_OPTIONS_BY_TYPE[node.cluster_type].map((r) => (
+                  <option key={r.value} value={r.value}>{r.label}</option>
+                ))}
+                <option value="__custom__">自定义角色</option>
+              </select>
             </div>
+            <input
+              value={node.role}
+              onChange={(e) => updateNode(node.id, { role: e.target.value })}
+              style={{ ...inputStyle, marginTop: '0.5rem' }}
+              placeholder="角色英文值（例如 primary / standby / publisher / subscriber）"
+            />
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.5rem' }}>
-              <button onClick={() => setSelectedNodeId(node.id)} style={btnSecondary}>View</button>
-              <button onClick={() => activateNode(node, 'home')} disabled={activating} style={{ ...btnSecondary, borderColor: 'var(--accent)', color: 'var(--accent)' }}>
-                {activating ? 'Activating...' : 'Activate'}
+              <button onClick={() => setSelectedNodeId(node.id)} style={btnSecondary}>鏌ョ湅</button>
+              <button onClick={() => activateNode(node, 'node_home')} disabled={activating} style={{ ...btnSecondary, borderColor: 'var(--accent)', color: 'var(--accent)' }}>
+                {activating ? '婵€娲讳腑...' : '婵€娲?}
               </button>
-              <button onClick={() => removeNode(node.id)} disabled={nodes.length <= 1} style={btnDanger}>Remove</button>
+              <button onClick={() => removeNode(node.id)} disabled={nodes.length <= 1} style={btnDanger}>绉婚櫎</button>
             </div>
           </div>
         ))}
         <button onClick={refreshCluster} disabled={loading} style={{ ...btnPrimary, width: '100%' }}>
-          {loading ? 'Refreshing...' : 'Refresh Cluster Status'}
+          {loading ? '鍒锋柊涓?..' : '鍒锋柊闆嗙兢鐘舵€?}
         </button>
         {error && <div style={{ color: 'var(--red)', marginTop: '0.75rem', fontSize: '0.85rem' }}>{error}</div>}
       </div>
 
       <div style={{ flex: 1, padding: '1rem', overflowY: 'auto' }}>
-        {!snapshot && <div style={{ color: 'var(--text-muted)' }}>Run "Refresh Cluster Status" to load topology and sync state.</div>}
+        {!snapshot && <div style={{ color: 'var(--text-muted)' }}>璇风偣鍑烩€滃埛鏂伴泦缇ょ姸鎬佲€濆姞杞芥嫇鎵戜笌鍚屾鐘舵€併€?/div>}
         {snapshot && (
           <>
             <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
-              <SummaryCard label="Nodes" value={String(snapshot.summary.total_nodes)} />
-              <SummaryCard label="Connected" value={String(snapshot.summary.connected_nodes)} />
-              <SummaryCard label="Physical" value={String(snapshot.summary.physical_nodes)} />
-              <SummaryCard label="Logical" value={String(snapshot.summary.logical_nodes)} />
+              <SummaryCard label="鑺傜偣鏁? value={String(snapshot.summary.total_nodes)} />
+              <SummaryCard label="鍦ㄧ嚎鑺傜偣" value={String(snapshot.summary.connected_nodes)} />
+              <SummaryCard label="鐗╃悊澶嶅埗鑺傜偣" value={String(snapshot.summary.physical_nodes)} />
+              <SummaryCard label="閫昏緫澶嶅埗鑺傜偣" value={String(snapshot.summary.logical_nodes)} />
             </div>
 
-            <h3 style={{ marginBottom: '0.5rem' }}>Topology</h3>
+            <h3 style={{ marginBottom: '0.5rem' }}>闆嗙兢鎷撴墤</h3>
             <TopologyView nodes={snapshot.nodes} selectedNodeId={selectedNode?.id} onSelect={setSelectedNodeId} />
 
             {selectedNode && <NodeDetail node={selectedNode} />}
@@ -295,12 +337,12 @@ function TopologyView({
 
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '0.8rem', background: 'var(--bg)' }}>
-      {lane('Physical Primary', physicalPrimary)}
-      <TopologyArrows fromCount={physicalPrimary.length} toCount={physicalStandby.length} label="streaming replication" color="#0ea5e9" />
-      {lane('Physical Standby', physicalStandby)}
-      {lane('Logical Publisher', logicalPublisher)}
-      <TopologyArrows fromCount={logicalPublisher.length} toCount={logicalSubscriber.length} label="logical replication" color="#22c55e" />
-      {lane('Logical Subscriber', logicalSubscriber)}
+      {lane('鐗╃悊澶嶅埗涓昏妭鐐?(Primary)', physicalPrimary)}
+      <TopologyArrows fromCount={physicalPrimary.length} toCount={physicalStandby.length} label="鐗╃悊娴佸鍒? color="#0ea5e9" />
+      {lane('鐗╃悊澶嶅埗浠庤妭鐐?(Standby)', physicalStandby)}
+      {lane('閫昏緫澶嶅埗鍙戝竷绔?(Publisher)', logicalPublisher)}
+      <TopologyArrows fromCount={logicalPublisher.length} toCount={logicalSubscriber.length} label="閫昏緫澶嶅埗" color="#22c55e" />
+      {lane('閫昏緫澶嶅埗璁㈤槄绔?(Subscriber)', logicalSubscriber)}
     </div>
   )
 }
@@ -326,26 +368,26 @@ function JointDebugChecklist({
   onClear: () => void
 }) {
   const steps = [
-    '配置至少 1 个节点并成功 Refresh（connected >= 1）',
-    '物理复制：Primary 与 Standby 同时在线，检查 lag_bytes 与 sync_state',
-    '逻辑复制：Publisher/Subscriber 在线，检查 subscription latest_end_lsn',
-    '从节点详情点击 Observe SQL/WAL/CLOG/Snapshot，确认能跳转并可读数据',
-    '切换不同节点重复验证，确认上下文连接切换正确',
+    '閰嶇疆鑷冲皯 1 涓妭鐐瑰苟鎴愬姛 Refresh锛坈onnected >= 1锛?,
+    '鐗╃悊澶嶅埗锛歅rimary 涓?Standby 鍚屾椂鍦ㄧ嚎锛屾鏌?lag_bytes 涓?sync_state',
+    '閫昏緫澶嶅埗锛歅ublisher/Subscriber 鍦ㄧ嚎锛屾鏌?subscription latest_end_lsn',
+    '浠庤妭鐐硅鎯呯偣鍑?Observe SQL/WAL/CLOG/Snapshot锛岀‘璁よ兘璺宠浆骞跺彲璇绘暟鎹?,
+    '鍒囨崲涓嶅悓鑺傜偣閲嶅楠岃瘉锛岀‘璁や笂涓嬫枃杩炴帴鍒囨崲姝ｇ‘',
   ]
   return (
     <div style={{ marginTop: '0.9rem', border: '1px solid var(--border)', borderRadius: '8px', background: 'var(--bg)', padding: '0.75rem' }}>
-      <h4 style={{ margin: 0, marginBottom: '0.5rem' }}>Joint Debug Checklist</h4>
+      <h4 style={{ margin: 0, marginBottom: '0.5rem' }}>鑱斿悎璋冭瘯娓呭崟</h4>
       {steps.map((step, idx) => (
         <div key={step} style={{ fontSize: '0.83rem', marginBottom: '0.25rem', color: 'var(--text-muted)' }}>
           {idx + 1}. {step}
         </div>
       ))}
       <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.4rem' }}>
-        <button onClick={onExport} style={btnSecondary} disabled={logs.length === 0}>Export Logs</button>
-        <button onClick={onClear} style={btnSecondary} disabled={logs.length === 0}>Clear Logs</button>
+        <button onClick={onExport} style={btnSecondary} disabled={logs.length === 0}>瀵煎嚭鏃ュ織</button>
+        <button onClick={onClear} style={btnSecondary} disabled={logs.length === 0}>娓呯┖鏃ュ織</button>
       </div>
       <div style={{ marginTop: '0.5rem', maxHeight: '180px', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: '6px', padding: '0.45rem', background: 'var(--bg-secondary)' }}>
-        {logs.length === 0 && <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>No logs yet.</div>}
+        {logs.length === 0 && <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>鏆傛棤鏃ュ織銆?/div>}
         {logs.map((log) => (
           <div key={log} style={{ fontSize: '0.75rem', fontFamily: 'Consolas, monospace', color: 'var(--text-muted)', marginBottom: '0.2rem' }}>
             {log}
@@ -366,7 +408,7 @@ function SummaryCard({ label, value }: { label: string; value: string }) {
 }
 
 function NodeDetail({ node }: { node: ClusterNodeStatus }) {
-  const activateAndGo = async (view: 'home' | 'wal' | 'clog' | 'memory') => {
+  const activateAndGo = async (view: 'node_home' | 'sql' | 'wal' | 'clog' | 'memory') => {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return
     const nodes = JSON.parse(raw) as ClusterNodeConfig[]
@@ -377,26 +419,27 @@ function NodeDetail({ node }: { node: ClusterNodeStatus }) {
 
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: '8px', background: 'var(--bg-secondary)', padding: '1rem' }}>
-      <h3 style={{ marginTop: 0, marginBottom: '0.5rem' }}>Node Detail: {node.name}</h3>
+      <h3 style={{ marginTop: 0, marginBottom: '0.5rem' }}>鑺傜偣璇︽儏锛歿node.name}</h3>
       <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
         {node.host}:{node.port}/{node.database} | {node.cluster_type} / {node.role}
       </div>
       <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
-        <button onClick={() => activateAndGo('home')} style={btnSecondary}>Observe SQL</button>
-        <button onClick={() => activateAndGo('wal')} style={btnSecondary}>Observe WAL</button>
-        <button onClick={() => activateAndGo('clog')} style={btnSecondary}>Observe CLOG</button>
-        <button onClick={() => activateAndGo('memory')} style={btnSecondary}>Observe Snapshot</button>
+        <button onClick={() => activateAndGo('node_home')} style={btnSecondary}>鑺傜偣涓婚〉</button>
+        <button onClick={() => activateAndGo('sql')} style={btnSecondary}>瑙傛祴 SQL</button>
+        <button onClick={() => activateAndGo('wal')} style={btnSecondary}>瑙傛祴 WAL</button>
+        <button onClick={() => activateAndGo('clog')} style={btnSecondary}>瑙傛祴 CLOG</button>
+        <button onClick={() => activateAndGo('memory')} style={btnSecondary}>瑙傛祴蹇収</button>
       </div>
-      {!node.connected && <div style={{ color: 'var(--red)' }}>{node.error || 'connection failed'}</div>}
+      {!node.connected && <div style={{ color: 'var(--red)' }}>{node.error || '杩炴帴澶辫触'}</div>}
       {node.connected && (
         <>
-          <div style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>Version: {node.version || '-'}</div>
-          <div style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>Recovery: {String(node.in_recovery)}</div>
-          <div style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>Current LSN: {node.current_lsn || '-'}</div>
-          <div style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>Replay LSN: {node.replay_lsn || '-'}</div>
-          <div style={{ fontSize: '0.85rem', marginBottom: '0.75rem' }}>WAL Receiver: {node.wal_receiver_status || '-'}</div>
+          <div style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>鐗堟湰锛歿node.version || '-'}</div>
+          <div style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>鎭㈠妯″紡锛歿String(node.in_recovery)}</div>
+          <div style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>褰撳墠 LSN锛歿node.current_lsn || '-'}</div>
+          <div style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>鍥炴斁 LSN锛歿node.replay_lsn || '-'}</div>
+          <div style={{ fontSize: '0.85rem', marginBottom: '0.75rem' }}>WAL 鎺ユ敹鍣細{node.wal_receiver_status || '-'}</div>
 
-          <h4 style={{ margin: '0.25rem 0' }}>Physical Sync Channels</h4>
+          <h4 style={{ margin: '0.25rem 0' }}>鐗╃悊鍚屾閫氶亾</h4>
           {node.physical_replication && node.physical_replication.length > 0 ? (
             node.physical_replication.map((ch) => (
               <div key={`${node.id}-${ch.name}`} style={{ fontSize: '0.82rem', padding: '0.4rem', border: '1px solid var(--border)', borderRadius: '6px', marginBottom: '0.4rem' }}>
@@ -411,11 +454,11 @@ function NodeDetail({ node }: { node: ClusterNodeStatus }) {
               </div>
             ))
           ) : (
-            <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>No physical replication channel found.</div>
+            <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>鏈彂鐜扮墿鐞嗗鍒堕€氶亾銆?/div>
           )}
 
-          <h4 style={{ margin: '0.25rem 0' }}>Logical Replication</h4>
-          <div style={{ fontSize: '0.82rem', marginBottom: '0.35rem' }}>Logical Slots: {node.logical_slots} | Publications: {node.publications}</div>
+          <h4 style={{ margin: '0.25rem 0' }}>閫昏緫澶嶅埗</h4>
+          <div style={{ fontSize: '0.82rem', marginBottom: '0.35rem' }}>閫昏緫妲斤細{node.logical_slots} | 鍙戝竷鏁伴噺锛歿node.publications}</div>
           {node.subscriptions && node.subscriptions.length > 0 ? (
             node.subscriptions.map((sub) => (
               <div key={`${node.id}-${sub.name}`} style={{ fontSize: '0.82rem', padding: '0.4rem', border: '1px solid var(--border)', borderRadius: '6px', marginBottom: '0.4rem' }}>
@@ -426,7 +469,7 @@ function NodeDetail({ node }: { node: ClusterNodeStatus }) {
               </div>
             ))
           ) : (
-            <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>No subscription found.</div>
+            <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>鏈彂鐜拌闃呫€?/div>
           )}
         </>
       )}
@@ -445,15 +488,15 @@ function healthLabel(ch: { state?: string; sync_state?: string; lag_bytes?: numb
   const state = (ch.state || '').toLowerCase()
   const sync = (ch.sync_state || '').toLowerCase()
   const lag = ch.lag_bytes || 0
-  if (state === 'streaming' && sync === 'sync' && lag <= 1024*1024) return 'healthy'
-  if (state === 'streaming' && lag <= 16*1024*1024) return 'warning'
-  return 'critical'
+  if (state === 'streaming' && sync === 'sync' && lag <= 1024*1024) return '鍋ュ悍'
+  if (state === 'streaming' && lag <= 16*1024*1024) return '棰勮'
+  return '涓ラ噸'
 }
 
 function healthColor(ch: { state?: string; sync_state?: string; lag_bytes?: number }): string {
   const label = healthLabel(ch)
-  if (label === 'healthy') return 'var(--green)'
-  if (label === 'warning') return '#d97706'
+  if (label === '鍋ュ悍') return 'var(--green)'
+  if (label === '棰勮') return '#d97706'
   return 'var(--red)'
 }
 
@@ -490,3 +533,7 @@ const btnDanger: CSSProperties = {
   ...btnSecondary,
   color: 'var(--red)',
 }
+
+
+
+
