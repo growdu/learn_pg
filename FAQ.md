@@ -1,25 +1,81 @@
 # FAQ / 常见问题
 
-## Q: 浏览器连接数据库失败，提示 502 Bad Gateway
+## Q: 浏览器访问前端返回 502，或 Docker 容器内 nginx 无法连接 backend
 
-**症状**：通过前端 UI 点击 "Connect" 连接 PostgreSQL，返回 502 Bad Gateway 或 `dial tcp: lookup pgv-backend on 127.0.0.11:53: no such host`。
+### 场景一：Docker nginx upstream 指向 localhost 导致 502
 
-**根因**：Docker Compose 中 nginx 反向代理到后端服务 `pgv-backend`。Docker 容器内使用嵌入式 DNS（`127.0.0.11`）来解析 Compose 服务名，但 nginx 配置文件（`frontend/nginx.conf`）缺少 DNS 解析器配置，导致 nginx worker 进程无法解析 `pgv-backend` 服务名，连接失败。
+**症状**：通过浏览器访问 `http://<host>/api/connect` 返回 502 Bad Gateway；但从宿主机 `curl http://localhost:<port>/api/connect` 正常。
 
-**解决方法**：在 `frontend/nginx.conf` 的 `http {}` 块中添加 Docker 内置 DNS 作为 resolver：
-
+**根因**：nginx 运行在 Docker 容器内，`upstream` 配置错误：
 ```nginx
-http {
-    resolver 127.0.0.11 valid=30s ipv6=off;
-    # ... 其他配置 ...
+# 错误配置
+upstream backend {
+    server 127.0.0.1:3010;   # 容器内的 127.0.0.1 是容器自己，不是 backend！
 }
 ```
+容器内 `127.0.0.1` 指向容器自己，而不是 backend 容器或宿主机上的端口，所以 nginx 永远拿不到 upstream 连接。
 
-`127.0.0.11` 是 Docker 为容器分配的嵌入式 DNS 服务器地址，所有 Docker 服务名都通过它解析。`valid=30s` 控制 DNS 缓存 TTL，`ipv6=off` 避免 IPv6 解析延迟。
+**解决方法**：使用 Docker 内部 DNS 解析 backend 服务名：
+```nginx
+upstream backend {
+    server backend:3000;   # Docker 网络中通过 DNS 解析为 backend 容器的内部 IP
+    keepalive 16;
+}
+```
+容器之间通过服务名互相访问，必须在同一 Docker 网络中。
 
-**涉及文件**：
-- `frontend/nginx.conf`
-- `docker-compose.yml`（服务网络配置）
+**涉及文件**：`frontend/nginx.conf`
+
+---
+
+### 场景二：主机上的 nginx 与 Docker 端口冲突
+
+**症状**：Docker Compose 正确映射了 `80:80`，但浏览器仍然 502 或访问到错误的内容（主机 nginx 默认页）。
+
+**根因**：主机上已运行了 nginx（或其他服务）占用了 80 端口。`docker ps` 显示 Docker 容器端口映射正常，但实际监听 80 的是主机 nginx，不是容器内的 nginx：
+```
+$ ss -tlnp | grep :80
+nginx  worker: 0.0.0.0:80   # ← 主机 nginx，不是 Docker 容器
+docker-proxy  127.0.0.1:3010  # ← Docker 映射在其他端口
+```
+浏览器实际访问的是主机 nginx，它没有 `/api/` 的反向代理配置，因此 502。
+
+**诊断方法**：
+```bash
+# 检查 80 端口被谁占用
+ss -tlnp | grep :80
+
+# 检查 Docker 容器的实际端口映射
+docker ps --format "table {{.Names}}\t{{.Ports}}"
+```
+
+**解决方法**（三选一）：
+
+1. **停止主机 nginx**（推荐）：
+   ```bash
+   sudo systemctl stop nginx   # 或 nginx.service
+   # 或禁用并停止
+   sudo systemctl disable --now nginx
+   ```
+
+2. **修改 Docker 映射到其他端口**，绕过冲突：
+   ```yaml
+   # docker-compose.yml
+   frontend:
+     ports:
+       - "8080:80"   # 映射到 8080，访问 http://host:8080
+   ```
+
+3. **修改主机 nginx 配置**，将 Docker 前端的请求反向代理出去：
+   在主机 nginx 的 `server {}` 块中添加：
+   ```nginx
+   location / {
+       proxy_pass http://127.0.0.1:<映射端口>;
+       proxy_set_header Host $host;
+   }
+   ```
+
+**涉及文件**：`frontend/nginx.conf`、`docker-compose.yml`（端口映射）
 
 ---
 
