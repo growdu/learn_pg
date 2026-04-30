@@ -6,7 +6,7 @@ interface Props {
   selectedProjectId: string
   onSelectProject: (id: string) => void
   onCreateProject: () => void
-  onCreateTemplateProject: (template: 'physical' | 'logical') => void
+  onOpenTemplateDialog: () => void
   onRemoveProject: (id: string) => void
 }
 
@@ -15,7 +15,7 @@ export default function ProjectHomeView({
   selectedProjectId,
   onSelectProject,
   onCreateProject,
-  onCreateTemplateProject,
+  onOpenTemplateDialog,
   onRemoveProject,
 }: Props) {
   const selected = projects.find((p) => p.id === selectedProjectId) ?? projects[0]
@@ -25,9 +25,8 @@ export default function ProjectHomeView({
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
         <h2 style={{ margin: 0 }}>项目主页</h2>
         <div style={{ display: 'flex', gap: '0.4rem' }}>
-          <button onClick={() => onCreateTemplateProject('physical')} style={smallBtn}>+ 物理复制模板</button>
-          <button onClick={() => onCreateTemplateProject('logical')} style={smallBtn}>+ 逻辑复制模板</button>
-          <button onClick={onCreateProject} style={btn}>+ 新建项目</button>
+          <button onClick={onOpenTemplateDialog} style={btn}>+ 从模板创建</button>
+          <button onClick={onCreateProject} style={btn}>+ 新建空白项目</button>
         </div>
       </div>
       <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem', marginBottom: '0.8rem' }}>

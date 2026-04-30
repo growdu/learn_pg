@@ -15,11 +15,14 @@ import TransactionStateView from './components/transaction/TransactionStateView'
 import ProjectHomeView from './components/workspace/ProjectHomeView'
 import ClusterHomeView from './components/workspace/ClusterHomeView'
 import ComponentHomeView from './components/workspace/ComponentHomeView'
+import TemplateDialog from './components/workspace/TemplateDialog'
 import { useVisualizationData } from './hooks/useVisualizationData'
 import { useWebSocket } from './hooks/useWebSocket'
 import { usePGStore } from './stores/pgStore'
 import type { ClusterNodeConfig } from './types/cluster'
 import type { WorkspaceComponent, WorkspaceProject } from './types/workspace'
+import type { ReplicationTemplate, TemplateParams } from './types/template'
+import { ALL_TEMPLATES } from './types/template'
 
 export type View =
   | 'project_home'
@@ -78,6 +81,7 @@ function App() {
   const [projects, setProjects] = useState<WorkspaceProject[]>(() => loadProjects())
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const [selectedClusterId, setSelectedClusterId] = useState('')
+  const [showTemplateDialog, setShowTemplateDialog] = useState(false)
 
   const storeConnected = usePGStore((s) => s.connected)
   const storeVersion = usePGStore((s) => s.version)
@@ -114,46 +118,14 @@ function App() {
     setSelectedProjectId(project.id)
   }
 
-  const createTemplateProject = (template: 'physical' | 'logical') => {
-    const idx = projects.length + 1
-    const baseName = template === 'physical' ? `物理复制项目 ${idx}` : `逻辑复制项目 ${idx}`
-
-    const physicalCluster = {
-      id: genId(),
-      name: '主从集群',
-      replicationType: 'physical' as const,
-      nodes: [makeDefaultNode(1), makeDefaultNode(2)].map((n, i) => ({
-        ...n,
-        role: i === 0 ? 'primary' : 'standby',
-      })),
-    }
-    const logicalCluster = {
-      id: genId(),
-      name: '发布订阅集群',
-      replicationType: 'logical' as const,
-      nodes: [makeDefaultNode(1), makeDefaultNode(2)].map((n, i) => ({
-        ...n,
-        role: i === 0 ? 'publisher' : 'subscriber',
-      })),
-    }
-
-    const project: WorkspaceProject = {
-      id: genId(),
-      name: baseName,
-      clusters: [template === 'physical' ? physicalCluster : logicalCluster],
-      components: [
-        {
-          id: genId(),
-          name: template === 'physical' ? '复制采集组件' : '逻辑采集组件',
-          componentType: 'collector',
-          linkedClusterIds: [template === 'physical' ? physicalCluster.id : logicalCluster.id],
-        },
-      ],
-    }
+  const handleTemplateConfirm = (templateId: ReplicationTemplate, name: string, params: TemplateParams) => {
+    setShowTemplateDialog(false)
+    const tpl = ALL_TEMPLATES.find((t) => t.id === templateId)!
+    const project = tpl.buildProject(name, params, makeDefaultNode)
     const next = [...projects, project]
     setProjects(next)
     setSelectedProjectId(project.id)
-    setSelectedClusterId(project.clusters[0].id)
+    if (project.clusters[0]) setSelectedClusterId(project.clusters[0].id)
   }
 
   const removeProject = (id: string) => {
@@ -275,7 +247,7 @@ function App() {
             selectedProjectId={selectedProjectId}
             onSelectProject={setSelectedProjectId}
             onCreateProject={createProject}
-            onCreateTemplateProject={createTemplateProject}
+            onOpenTemplateDialog={() => setShowTemplateDialog(true)}
             onRemoveProject={removeProject}
           />
         )
@@ -300,6 +272,14 @@ function App() {
             onCreateComponent={createComponent}
             onRemoveComponent={removeComponent}
             onToggleLink={toggleLink}
+            onActivateNode={(clusterId, nodeId) => {
+              setSelectedClusterId(clusterId)
+              setCurrentView('cluster_home')
+              setTimeout(() => {
+                const el = document.querySelector(`[data-node-id="${nodeId}"]`)
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              }, 100)
+            }}
           />
         )
       case 'node_home':
@@ -350,6 +330,12 @@ function App() {
         </main>
       </div>
       <StatusBar collectorMode={collectorMode} connected={connected} eventCount={eventCount} lastEventType={lastEventType} wsConnected={wsConnected} />
+      {showTemplateDialog && (
+        <TemplateDialog
+          onConfirm={handleTemplateConfirm}
+          onCancel={() => setShowTemplateDialog(false)}
+        />
+      )}
     </div>
   )
 }
