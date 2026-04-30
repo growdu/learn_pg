@@ -1,4 +1,4 @@
-type View = 'home' | 'write' | 'read' | 'transaction' | 'xact_state' | 'wal' | 'clog' | 'buffer' | 'lock' | 'memory' | 'plan'
+import type { View } from '../../App'
 
 interface SidebarProps {
   currentView: View
@@ -6,25 +6,26 @@ interface SidebarProps {
 }
 
 const navItems: { key: View; label: string; group: string }[] = [
-  { key: 'home', label: '首页', group: '首页' },
-  { key: 'write', label: '写入 Pipeline', group: 'Pipeline' },
-  { key: 'read', label: '读取 Pipeline', group: 'Pipeline' },
-  { key: 'transaction', label: '事务 Pipeline', group: 'Pipeline' },
-  { key: 'xact_state', label: '事务状态机', group: 'Pipeline' },
-  { key: 'plan', label: '执行计划树', group: 'Pipeline' },
-  { key: 'wal', label: 'WAL 查看器', group: '专题' },
-  { key: 'clog', label: 'CLOG 查看器', group: '专题' },
-  { key: 'buffer', label: 'Buffer 热图', group: '内存' },
-  { key: 'lock', label: '锁等待图', group: '内存' },
-  { key: 'memory', label: '内存结构', group: '内存' },
+  { key: 'home', label: 'Home', group: 'Overview' },
+  { key: 'cluster', label: 'Cluster', group: 'Overview' },
+  { key: 'write', label: 'Write Pipeline', group: 'Pipeline' },
+  { key: 'read', label: 'Read Pipeline', group: 'Pipeline' },
+  { key: 'transaction', label: 'Transaction Pipeline', group: 'Pipeline' },
+  { key: 'xact_state', label: 'Transaction State', group: 'Pipeline' },
+  { key: 'plan', label: 'Plan Tree', group: 'Pipeline' },
+  { key: 'wal', label: 'WAL Viewer', group: 'Topics' },
+  { key: 'clog', label: 'CLOG Viewer', group: 'Topics' },
+  { key: 'buffer', label: 'Buffer Heatmap', group: 'Memory' },
+  { key: 'lock', label: 'Lock Graph', group: 'Memory' },
+  { key: 'memory', label: 'Memory Struct', group: 'Memory' },
 ]
 
 export default function Sidebar({ currentView, onNavigate }: SidebarProps) {
-  const groups = ['首页', 'Pipeline', '专题', '内存']
+  const groups = ['Overview', 'Pipeline', 'Topics', 'Memory']
 
   return (
     <aside style={{
-      width: '200px',
+      width: '220px',
       background: 'var(--bg-secondary)',
       borderRight: '1px solid var(--border)',
       padding: '1rem 0',

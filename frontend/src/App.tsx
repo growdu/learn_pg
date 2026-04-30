@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Header from './components/layout/Header'
 import Sidebar from './components/layout/Sidebar'
 import StatusBar from './components/layout/StatusBar'
@@ -12,15 +12,19 @@ import LockGraphView from './components/lock/LockGraphView'
 import MemoryStructView from './components/memory/MemoryStructView'
 import PlanTreeView from './components/pipeline/PlanTreeView'
 import TransactionStateView from './components/transaction/TransactionStateView'
+import ClusterView from './components/cluster/ClusterView'
 import { useVisualizationData } from './hooks/useVisualizationData'
 import { useWebSocket } from './hooks/useWebSocket'
+import { usePGStore } from './stores/pgStore'
 
-type View = 'home' | 'write' | 'read' | 'transaction' | 'xact_state' | 'wal' | 'clog' | 'buffer' | 'lock' | 'memory' | 'plan'
+export type View = 'home' | 'cluster' | 'write' | 'read' | 'transaction' | 'xact_state' | 'wal' | 'clog' | 'buffer' | 'lock' | 'memory' | 'plan'
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('home')
   const [connected, setConnected] = useState(false)
   const [pgVersion, setPgVersion] = useState('')
+  const storeConnected = usePGStore((s) => s.connected)
+  const storeVersion = usePGStore((s) => s.version)
   const { connected: wsConnected } = useWebSocket()
   const { buffers, collectorMode, eventCount, lastEventType, transactions, writeStages } = useVisualizationData()
 
@@ -46,6 +50,8 @@ function App() {
         return <MemoryStructView />
       case 'plan':
         return <PlanTreeView />
+      case 'cluster':
+        return <ClusterView />
       default:
         return connected ? (
           <SQLConsole />
@@ -76,3 +82,20 @@ function App() {
 }
 
 export default App
+  useEffect(() => {
+    if (storeConnected) setConnected(true)
+    if (storeVersion) setPgVersion(storeVersion)
+  }, [storeConnected, storeVersion])
+
+  useEffect(() => {
+    const handler = (evt: Event) => {
+      const custom = evt as CustomEvent<{ view?: View }>
+      const targetView = custom.detail?.view || 'home'
+      setConnected(true)
+      setCurrentView(targetView)
+      const latestVersion = usePGStore.getState().version
+      if (latestVersion) setPgVersion(latestVersion)
+    }
+    window.addEventListener('pgv-node-activated', handler)
+    return () => window.removeEventListener('pgv-node-activated', handler)
+  }, [])

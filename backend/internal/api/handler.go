@@ -195,9 +195,81 @@ type executeRequest struct {
 }
 
 type executeResponse struct {
-	Success bool                `json:"success"`
-	Result  *pg.ExecuteResult  `json:"result,omitempty"`
-	Error   string              `json:"error,omitempty"`
+	Success bool              `json:"success"`
+	Result  *pg.ExecuteResult `json:"result,omitempty"`
+	Error   string            `json:"error,omitempty"`
+}
+
+type clusterNodeRequest struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	User        string `json:"user"`
+	Password    string `json:"password"`
+	Database    string `json:"database"`
+	ClusterType string `json:"cluster_type"` // physical | logical
+	Role        string `json:"role"`         // primary/standby/publisher/subscriber
+}
+
+type clusterOverviewRequest struct {
+	Nodes []clusterNodeRequest `json:"nodes"`
+}
+
+type clusterOverviewResponse struct {
+	Success   bool                   `json:"success"`
+	Timestamp int64                  `json:"timestamp"`
+	Nodes     []clusterNodeStatus    `json:"nodes"`
+	Summary   clusterOverviewSummary `json:"summary"`
+	Error     string                 `json:"error,omitempty"`
+}
+
+type clusterOverviewSummary struct {
+	TotalNodes     int `json:"total_nodes"`
+	ConnectedNodes int `json:"connected_nodes"`
+	PhysicalNodes  int `json:"physical_nodes"`
+	LogicalNodes   int `json:"logical_nodes"`
+}
+
+type replicationChannel struct {
+	Name      string `json:"name"`
+	State     string `json:"state"`
+	SyncState string `json:"sync_state"`
+	SentLSN   string `json:"sent_lsn,omitempty"`
+	WriteLSN  string `json:"write_lsn,omitempty"`
+	FlushLSN  string `json:"flush_lsn,omitempty"`
+	ReplayLSN string `json:"replay_lsn,omitempty"`
+	LagBytes  int64  `json:"lag_bytes,omitempty"`
+}
+
+type logicalSubscription struct {
+	Name          string `json:"name"`
+	Enabled       bool   `json:"enabled"`
+	WorkerType    string `json:"worker_type,omitempty"`
+	ReceivedLSN   string `json:"received_lsn,omitempty"`
+	LatestEndLSN  string `json:"latest_end_lsn,omitempty"`
+	LatestEndTime string `json:"latest_end_time,omitempty"`
+}
+
+type clusterNodeStatus struct {
+	ID                  string                `json:"id"`
+	Name                string                `json:"name"`
+	Host                string                `json:"host"`
+	Port                int                   `json:"port"`
+	Database            string                `json:"database"`
+	ClusterType         string                `json:"cluster_type"`
+	Role                string                `json:"role"`
+	Connected           bool                  `json:"connected"`
+	Error               string                `json:"error,omitempty"`
+	Version             string                `json:"version,omitempty"`
+	InRecovery          bool                  `json:"in_recovery"`
+	CurrentLSN          string                `json:"current_lsn,omitempty"`
+	ReplayLSN           string                `json:"replay_lsn,omitempty"`
+	WalReceiverStatus   string                `json:"wal_receiver_status,omitempty"`
+	PhysicalReplication []replicationChannel  `json:"physical_replication,omitempty"`
+	LogicalSlots        int                   `json:"logical_slots"`
+	Publications        int                   `json:"publications"`
+	Subscriptions       []logicalSubscription `json:"subscriptions,omitempty"`
 }
 
 func (h *Handler) ServeExecute(w http.ResponseWriter, r *http.Request) {
@@ -240,6 +312,211 @@ func (h *Handler) ServeExecute(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) ServeClusterOverview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, r, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 512*1024))
+	if err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "failed to read body")
+		return
+	}
+	defer r.Body.Close()
+
+	var req clusterOverviewRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if len(req.Nodes) == 0 {
+		h.writeError(w, r, http.StatusBadRequest, "nodes is required and must contain at least one node")
+		return
+	}
+
+	resp := clusterOverviewResponse{
+		Success:   true,
+		Timestamp: time.Now().Unix(),
+		Nodes:     make([]clusterNodeStatus, 0, len(req.Nodes)),
+	}
+
+	for i, node := range req.Nodes {
+		status := h.inspectClusterNode(node)
+		if status.ID == "" {
+			status.ID = fmt.Sprintf("node-%d", i+1)
+		}
+		resp.Nodes = append(resp.Nodes, status)
+
+		resp.Summary.TotalNodes++
+		if status.Connected {
+			resp.Summary.ConnectedNodes++
+		}
+		if strings.EqualFold(status.ClusterType, "physical") {
+			resp.Summary.PhysicalNodes++
+		}
+		if strings.EqualFold(status.ClusterType, "logical") {
+			resp.Summary.LogicalNodes++
+		}
+	}
+
+	writeJSON(w, r, http.StatusOK, resp)
+}
+
+func (h *Handler) ServeClusterNodeInspect(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, r, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 128*1024))
+	if err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "failed to read body")
+		return
+	}
+	defer r.Body.Close()
+
+	var node clusterNodeRequest
+	if err := json.Unmarshal(body, &node); err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	if node.Host == "" {
+		h.writeError(w, r, http.StatusBadRequest, "host is required")
+		return
+	}
+
+	status := h.inspectClusterNode(node)
+	writeJSON(w, r, http.StatusOK, map[string]any{
+		"success": true,
+		"node":    status,
+	})
+}
+
+func (h *Handler) inspectClusterNode(node clusterNodeRequest) clusterNodeStatus {
+	host := orDefaultStr(node.Host, h.config.PGHost)
+	port := orDefaultInt(node.Port, h.config.PGPort)
+	user := orDefaultStr(node.User, h.config.PGUser)
+	password := orDefaultStr(node.Password, h.config.PGPassword)
+	db := orDefaultStr(node.Database, h.config.PGDatabase)
+	clusterType := strings.ToLower(orDefaultStr(node.ClusterType, "physical"))
+
+	status := clusterNodeStatus{
+		ID:          node.ID,
+		Name:        orDefaultStr(node.Name, host),
+		Host:        host,
+		Port:        port,
+		Database:    db,
+		ClusterType: clusterType,
+		Role:        orDefaultStr(node.Role, "unknown"),
+	}
+
+	client := &pg.Client{}
+	if err := client.Connect(host, port, user, password, db); err != nil {
+		status.Error = err.Error()
+		return status
+	}
+	defer client.Close()
+
+	status.Connected = true
+	if version, err := client.GetVersion(); err == nil {
+		status.Version = version
+	}
+	if rec, err := querySingleText(client, "SELECT pg_is_in_recovery()::text AS v"); err == nil {
+		status.InRecovery = rec == "true"
+	}
+	if lsn, err := querySingleText(client, "SELECT pg_current_wal_lsn()::text AS v"); err == nil {
+		status.CurrentLSN = lsn
+	}
+	if replayLSN, err := querySingleText(client, "SELECT coalesce(pg_last_wal_replay_lsn()::text,'') AS v"); err == nil {
+		status.ReplayLSN = replayLSN
+	}
+	if wr, err := querySingleText(client, "SELECT coalesce(status,'') AS v FROM pg_stat_wal_receiver LIMIT 1"); err == nil {
+		status.WalReceiverStatus = wr
+	}
+
+	if rows, err := client.Execute(`
+		SELECT coalesce(application_name,'') AS application_name,
+		       coalesce(state,'') AS state,
+		       coalesce(sync_state,'') AS sync_state,
+		       coalesce(sent_lsn::text,'') AS sent_lsn,
+		       coalesce(write_lsn::text,'') AS write_lsn,
+		       coalesce(flush_lsn::text,'') AS flush_lsn,
+		       coalesce(replay_lsn::text,'') AS replay_lsn,
+		       coalesce(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)::bigint,0)::text AS lag_bytes
+		FROM pg_stat_replication
+		ORDER BY application_name`); err == nil && rows != nil {
+		for _, row := range rows.Rows {
+			lag, _ := strconv.ParseInt(row["lag_bytes"], 10, 64)
+			status.PhysicalReplication = append(status.PhysicalReplication, replicationChannel{
+				Name:      row["application_name"],
+				State:     row["state"],
+				SyncState: row["sync_state"],
+				SentLSN:   row["sent_lsn"],
+				WriteLSN:  row["write_lsn"],
+				FlushLSN:  row["flush_lsn"],
+				ReplayLSN: row["replay_lsn"],
+				LagBytes:  lag,
+			})
+		}
+	}
+
+	if n, err := querySingleInt(client, "SELECT count(*) AS v FROM pg_replication_slots WHERE slot_type='logical'"); err == nil {
+		status.LogicalSlots = n
+	}
+	if n, err := querySingleInt(client, "SELECT count(*) AS v FROM pg_publication"); err == nil {
+		status.Publications = n
+	}
+	if rows, err := client.Execute(`
+		SELECT coalesce(s.subname,'') AS subname,
+		       coalesce(s.subenabled::text,'false') AS subenabled,
+		       coalesce(ss.worker_type,'') AS worker_type,
+		       coalesce(ss.received_lsn::text,'') AS received_lsn,
+		       coalesce(ss.latest_end_lsn::text,'') AS latest_end_lsn,
+		       coalesce(ss.latest_end_time::text,'') AS latest_end_time
+		FROM pg_subscription s
+		LEFT JOIN pg_stat_subscription ss ON s.oid = ss.subid
+		ORDER BY s.subname`); err == nil && rows != nil {
+		for _, row := range rows.Rows {
+			status.Subscriptions = append(status.Subscriptions, logicalSubscription{
+				Name:          row["subname"],
+				Enabled:       row["subenabled"] == "true",
+				WorkerType:    row["worker_type"],
+				ReceivedLSN:   row["received_lsn"],
+				LatestEndLSN:  row["latest_end_lsn"],
+				LatestEndTime: row["latest_end_time"],
+			})
+		}
+	}
+
+	_ = clusterType
+	return status
+}
+
+func querySingleText(client *pg.Client, sql string) (string, error) {
+	res, err := client.Execute(sql)
+	if err != nil {
+		return "", err
+	}
+	if res == nil || len(res.Rows) == 0 {
+		return "", fmt.Errorf("no rows")
+	}
+	return res.Rows[0]["v"], nil
+}
+
+func querySingleInt(client *pg.Client, sql string) (int, error) {
+	text, err := querySingleText(client, sql)
+	if err != nil {
+		return 0, err
+	}
+	v, err := strconv.Atoi(text)
+	if err != nil {
+		return 0, err
+	}
+	return v, nil
+}
+
 // ─── WAL ─────────────────────────────────────────────────────────────────────
 
 type walRequest struct {
@@ -264,10 +541,10 @@ type walRecordResponse struct {
 
 type walResponse struct {
 	Records []walRecordResponse `json:"records"`
-	Segment string             `json:"segment,omitempty"`
-	DataDir string             `json:"dataDir,omitempty"`
-	Limit   int                `json:"limit"`
-	Note    string             `json:"note,omitempty"`
+	Segment string              `json:"segment,omitempty"`
+	DataDir string              `json:"dataDir,omitempty"`
+	Limit   int                 `json:"limit"`
+	Note    string              `json:"note,omitempty"`
 }
 
 func (h *Handler) ServeWAL(w http.ResponseWriter, r *http.Request) {
@@ -398,10 +675,10 @@ func (h *Handler) ServeWALSegments(w http.ResponseWriter, r *http.Request) {
 
 type clogResponse struct {
 	Transactions []clogTransactionResponse `json:"transactions"`
-	StartXid     uint32                   `json:"startXid"`
-	EndXid       uint32                   `json:"endXid"`
-	DataDir      string                   `json:"dataDir,omitempty"`
-	Note         string                   `json:"note,omitempty"`
+	StartXid     uint32                    `json:"startXid"`
+	EndXid       uint32                    `json:"endXid"`
+	DataDir      string                    `json:"dataDir,omitempty"`
+	Note         string                    `json:"note,omitempty"`
 }
 
 type clogTransactionResponse struct {
@@ -475,9 +752,9 @@ func (h *Handler) ServeCLOGFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, r, http.StatusOK, map[string]any{
-		"filename":   filename,
-		"path":       filePath,
-		"total":      len(entries),
+		"filename":     filename,
+		"path":         filePath,
+		"total":        len(entries),
 		"transactions": entries,
 	})
 }
@@ -603,15 +880,11 @@ func (h *Handler) ServeSnapshot(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-
-
 // ─── WebSocket ────────────────────────────────────────────────────────────────
 
 func (h *Handler) ServeWS(w http.ResponseWriter, r *http.Request) {
 	ws.ServeWs(h.hub, w, r)
 }
-
-
 
 func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	mux.HandleFunc("/health", h.ServeHealth)
@@ -619,6 +892,8 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	mux.HandleFunc("/livez", h.ServeLivez)
 	mux.HandleFunc("/api/connect", h.ServeConnect)
 	mux.HandleFunc("/api/execute", h.ServeExecute)
+	mux.HandleFunc("/api/cluster/overview", h.ServeClusterOverview)
+	mux.HandleFunc("/api/cluster/node/inspect", h.ServeClusterNodeInspect)
 	mux.HandleFunc("/api/wal", h.ServeWAL)
 	mux.HandleFunc("/api/wal/segments", h.ServeWALSegments)
 	mux.HandleFunc("/api/clog", h.ServeCLOG)
