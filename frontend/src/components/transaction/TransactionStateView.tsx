@@ -52,6 +52,7 @@ function TransactionTimeline({ states }: { states: TransactionState[] }) {
     const tMin = Math.min(...allTimes)
     const tMax = Math.max(...allTimes)
     const tRange = tMax - tMin || 1
+    void tRange // reserved for future use
     const chartW = width - labelW - 60
 
     const xScale = d3.scaleLinear().domain([tMin, tMax]).range([0, chartW])
@@ -139,6 +140,10 @@ function TransactionTimeline({ states }: { states: TransactionState[] }) {
 }
 
 // ─── Main State Machine View ──────────────────────────────────────────────────
+
+export interface TransactionStateViewProps {
+  transactions?: TransactionState[]
+}
 
 export default function TransactionStateView({ transactions }: TransactionStateViewProps) {
   const svgRef = useRef<SVGSVGElement>(null)

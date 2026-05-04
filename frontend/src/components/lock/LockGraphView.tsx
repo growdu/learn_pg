@@ -100,7 +100,6 @@ function WaitTimeHistogram({ edges }: { edges: LockEdge[] }) {
     svg.attr('width', W).attr('height', H)
 
     const maxWait = Math.max(...withWait.map(e => e.wait_time_us))
-    const barW = Math.min(30, (W - 20) / withWait.length - 4)
     const xScale = d3.scaleBand()
       .domain(withWait.map((_, i) => String(i)))
       .range([10, W - 10])

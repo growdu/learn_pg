@@ -235,7 +235,7 @@ function FieldLegend({ fields }: { fields: typeof PGPROC_FIELDS }) {
 function PGProcPanel({ procs }: { procs: PGProcEntry[] }) {
   const [selected, setSelected] = useState<PGProcEntry | null>(null)
   const [sortBy, setSortBy] = useState<'pid' | 'xid' | 'lastEventTs'>('pid')
-  const [selectedField, setSelectedField] = useState<string | null>(null)
+  const [_selectedField, _setSelectedField] = useState<string | null>(null)
 
   const sorted = [...procs].sort((a, b) => {
     if (sortBy === 'pid') return a.pid - b.pid

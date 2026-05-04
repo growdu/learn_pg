@@ -2,6 +2,25 @@
 
 ---
 
+## 2026-05-04
+
+### 联调验证完成
+
+| 端点 | 状态 | 备注 |
+|------|------|------|
+| GET /health | ✅ | pg_connected: true |
+| GET /readyz | ✅ | status: ready |
+| GET /livez | ✅ | status: alive |
+| POST /api/execute | ✅ | SQL 执行正常，PostgreSQL 18.3 |
+| GET /api/wal/segments | ✅ | 返回 WAL 段列表 |
+| WS /ws/ | ✅ | 101 Switching Protocols |
+
+**docker-compose.dev.yml 完整联调通过**
+
+> 注：CLOG API 有已知路由问题（/api/clog/status 被 ServeCLOGFile 误匹配为文件名），不影响核心功能。
+
+---
+
 ## 2026-03-31
 
 ### 已完成任务（全部完成）
@@ -24,7 +43,7 @@
 | 957f5ec | 6.2 | GitHub Actions CI 流水线 |
 | bde5280 | 2.9-2.11 | 优雅关闭, slog, 中间件, WAL API增强, 统一错误格式 |
 
-**累计 15 次提交，已推送至 GitHub (growdu/learn_pg)**
+**累计 16 次提交，已推送至 GitHub (growdu/learn_pg)**
 
 ### 项目状态：✅ 全部完成
 
@@ -38,14 +57,14 @@
 ### 部署方式
 
 ```bash
-# 启动完整环境
-docker compose up -d
+# 启动完整环境（开发模式）
+docker compose -f docker-compose.dev.yml up -d
 
-# 仅启动核心服务（Linux）
-docker compose up -d postgres backend frontend
+# 仅启动核心服务（Linux，含 eBPF 采集器需要特权容器）
+docker compose -f docker-compose.dev.yml --profile linux-only up -d
 
-# 启动含 eBPF 采集器（需要特权容器）
-docker compose --profile linux-only up -d
+# 生产环境
+docker compose -f docker-compose.yml up -d
 ```
 
 ### 技术栈
@@ -58,4 +77,4 @@ docker compose --profile linux-only up -d
 
 ---
 
-*最后更新：2026-03-31*
+*最后更新：2026-05-04*

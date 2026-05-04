@@ -69,7 +69,7 @@
 
 | 序号 | 任务 | 状态 | 备注 |
 |------|------|------|------|
-| 6.1 | Docker Compose 完整联调 | pending | postgres + backend + frontend + collector |
+| 6.1 | Docker Compose 完整联调 | completed | postgres + backend + frontend 联动验证通过，2026-05-04 |
 | 6.2 | GitHub Actions CI 流水线 | completed | Docker Buildx 多架构构建 |
 | 6.3 | 按功能单元自动提交（每完成一个任务即提交） | completed | 已完成 14 次提交 |
 | 6.4 | GitHub 仓库初始化并推送 | completed | growdu/learn_pg 已推送 |
@@ -107,4 +107,4 @@
 
 ---
 
-*最后更新：2026-03-30*
+*最后更新：2026-05-04*

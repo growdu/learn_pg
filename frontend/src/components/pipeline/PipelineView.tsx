@@ -136,6 +136,7 @@ function PipelineGantt({ stages }: { stages: PipelineStage[] }) {
       const barW = Math.max(2, xScale(stage.duration_us))
       const fillColor = stage.status === 'error' ? '#f85149' : stage.color || '#3fb950'
       const isSelected = false
+      void isSelected // placeholder for future selection state
 
       // Row background
       svg.append('rect')
