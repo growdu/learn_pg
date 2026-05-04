@@ -158,11 +158,20 @@ function buildBufferDescEntries(events: ProbeEvent[]): BufferDescEntry[] {
 
 // ─── Field bytes visualizer ────────────────────────────────────────────────────
 
-function FieldBytes({ fields, baseOffset = 0, highlightStart, highlightEnd }: {
-  fields: typeof PGPROC_FIELDS
+interface FieldDef {
+  name: string
+  offset: number
+  size: number
+  desc: string
+}
+
+function FieldBytes({ fields, baseOffset = 0, highlightStart, highlightEnd, onFieldClick, selectedField }: {
+  fields: FieldDef[]
   baseOffset?: number
   highlightStart?: number
   highlightEnd?: number
+  onFieldClick?: (field: FieldDef | null) => void
+  selectedField?: string
 }) {
   const totalSize = fields[fields.length - 1]!.offset + fields[fields.length - 1]!.size - baseOffset
   const bytes = Array.from({ length: totalSize }, (_, i) => i)
@@ -175,19 +184,26 @@ function FieldBytes({ fields, baseOffset = 0, highlightStart, highlightEnd }: {
         const field = getFieldAtOffset(i)
         const isHighlighted = highlightStart !== undefined && highlightEnd !== undefined
           && (baseOffset + i) >= highlightStart && (baseOffset + i) < highlightEnd
-        const color = isHighlighted ? '#ffa657'
+        const isSelected = selectedField && field && field.name === selectedField
+        const color = isSelected ? '#ffa657'
+          : isHighlighted ? '#ffa657'
           : i < 16 ? '#7ee787'
           : i < 32 ? '#79c0ff'
           : i < 48 ? '#d2a8ff'
           : i < 64 ? '#ffa657'
           : '#f0883e'
         return (
-          <div key={i} title={`${field?.name ?? 'pad'} @ ${baseOffset + i}`}
+          <div key={i}
+            title={`${field?.name ?? 'pad'} @ ${baseOffset + i}`}
+            onClick={() => field && onFieldClick?.(isSelected ? null : field)}
             style={{
               width: '8px', height: '8px',
               background: color,
               borderRadius: '1px',
               opacity: field ? 1 : 0.25,
+              cursor: field ? 'pointer' : 'default',
+              outline: isSelected ? '1px solid #ffa657' : 'none',
+              outlineOffset: '1px',
             }}
           />
         )
@@ -219,6 +235,7 @@ function FieldLegend({ fields }: { fields: typeof PGPROC_FIELDS }) {
 function PGProcPanel({ procs }: { procs: PGProcEntry[] }) {
   const [selected, setSelected] = useState<PGProcEntry | null>(null)
   const [sortBy, setSortBy] = useState<'pid' | 'xid' | 'lastEventTs'>('pid')
+  const [selectedField, setSelectedField] = useState<string | null>(null)
 
   const sorted = [...procs].sort((a, b) => {
     if (sortBy === 'pid') return a.pid - b.pid

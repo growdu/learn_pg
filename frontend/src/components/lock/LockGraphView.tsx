@@ -26,7 +26,7 @@ interface SimLink extends d3.SimulationLinkDatum<SimNode> {
   mode: string
 }
 
-// Demo data: processes waiting for locks
+// Demo data
 function generateDemoData(): { nodes: LockNode[]; edges: LockEdge[] } {
   const nodes: LockNode[] = [
     { id: 'pid-1001', pid: 1001, label: 'PID 1001', type: 'backend' },
@@ -58,15 +58,11 @@ function detectCycle(nodes: SimNode[], links: SimLink[]): string[][] {
 
   const cycles: string[][] = []
   const visited = new Set<string>()
-  const stack: string[][] = []
 
   function dfs(node: string, path: string[]) {
-    if (stack.some((p) => p.includes(node))) {
-      const startIdx = stack.find((p) => p.includes(node))
-      if (startIdx !== undefined) {
-        const cycle = path.slice(path.indexOf(node))
-        if (cycle.length >= 2) cycles.push(cycle)
-      }
+    if (path.includes(node)) {
+      const cycle = path.slice(path.indexOf(node))
+      if (cycle.length >= 2) cycles.push(cycle)
       return
     }
     if (visited.has(node)) return
@@ -87,14 +83,97 @@ function detectCycle(nodes: SimNode[], links: SimLink[]): string[][] {
   return cycles
 }
 
+// ─── Wait-time histogram ────────────────────────────────────────────────────────
+
+function WaitTimeHistogram({ edges }: { edges: LockEdge[] }) {
+  const svgRef = useRef<SVGSVGElement>(null)
+
+  useEffect(() => {
+    if (!svgRef.current) return
+    const svg = d3.select(svgRef.current)
+    svg.selectAll('*').remove()
+
+    const W = 300; const H = 60
+    const withWait = edges.filter(e => e.wait_time_us > 0)
+    if (withWait.length === 0) return
+
+    svg.attr('width', W).attr('height', H)
+
+    const maxWait = Math.max(...withWait.map(e => e.wait_time_us))
+    const barW = Math.min(30, (W - 20) / withWait.length - 4)
+    const xScale = d3.scaleBand()
+      .domain(withWait.map((_, i) => String(i)))
+      .range([10, W - 10])
+      .padding(0.2)
+    const yScale = d3.scaleLinear().domain([0, maxWait]).range([H - 20, 5])
+
+    // Grid lines
+    yScale.ticks(3).forEach(tick => {
+      svg.append('line')
+        .attr('x1', 10).attr('x2', W - 10)
+        .attr('y1', yScale(tick)).attr('y2', yScale(tick))
+        .attr('stroke', '#21262d').attr('stroke-width', 1)
+    })
+
+    // Bars
+    withWait.forEach((edge, i) => {
+      const barH = H - 20 - yScale(edge.wait_time_us)
+      const barColor = edge.mode === 'waiting' ? '#f85149'
+        : edge.wait_time_us > 100000 ? '#d29922'
+        : '#58a6ff'
+
+      svg.append('rect')
+        .attr('x', xScale(String(i))!)
+        .attr('y', yScale(edge.wait_time_us))
+        .attr('width', xScale.bandwidth())
+        .attr('height', barH)
+        .attr('fill', barColor)
+        .attr('opacity', 0.8)
+        .attr('rx', 2)
+
+      svg.append('text')
+        .attr('x', xScale(String(i))! + xScale.bandwidth() / 2)
+        .attr('y', H - 5)
+        .attr('text-anchor', 'middle')
+        .attr('fill', '#7d8590')
+        .attr('font-size', '8px')
+        .text(edge.wait_time_us < 1000 ? `${edge.wait_time_us}us` : `${(edge.wait_time_us / 1000).toFixed(0)}ms`)
+    })
+
+    // Y label
+    svg.append('text')
+      .attr('x', 4).attr('y', H / 2)
+      .attr('text-anchor', 'middle')
+      .attr('fill', '#7d8590')
+      .attr('font-size', '8px')
+      .attr('transform', `rotate(-90, 4, ${H / 2})`)
+      .text('wait time')
+  }, [edges])
+
+  return (
+    <div style={{ marginTop: '0.75rem' }}>
+      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '4px' }}>等待时间分布</div>
+      <svg ref={svgRef} style={{ display: 'block' }} />
+    </div>
+  )
+}
+
 export default function LockGraphView({ nodes, edges }: LockGraphViewProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [selectedNode, setSelectedNode] = useState<LockNode | null>(null)
   const [cycles, setCycles] = useState<string[][]>([])
+  const [animFrame, setAnimFrame] = useState(0)
   const demoData = generateDemoData()
   const displayNodes = nodes || demoData.nodes
   const displayEdges = edges || demoData.edges
+
+  // Cycle pulse animation
+  useEffect(() => {
+    if (cycles.length === 0) return
+    const id = setInterval(() => setAnimFrame(f => (f + 1) % 30), 100)
+    return () => clearInterval(id)
+  }, [cycles.length])
 
   useEffect(() => {
     if (!svgRef.current || !containerRef.current) return
@@ -116,18 +195,15 @@ export default function LockGraphView({ nodes, edges }: LockGraphViewProps) {
       mode: e.mode,
     }))
 
-    // Detect cycles
     const detected = detectCycle(simNodes as SimNode[], simLinks as SimLink[])
     setCycles(detected)
 
-    // Build simulation
     const simulation = d3.forceSimulation<SimNode>(simNodes)
       .force('link', d3.forceLink<SimNode, SimLink>(simLinks).id((d) => d.id).distance(100).strength(0.5))
       .force('charge', d3.forceManyBody().strength(-300))
       .force('center', d3.forceCenter(width / 2, height / 2))
       .force('collision', d3.forceCollide().radius(30))
 
-    // Draw links
     const linkGroup = svg.append('g')
     const linkElements = linkGroup.selectAll('line')
       .data(simLinks)
@@ -141,7 +217,6 @@ export default function LockGraphView({ nodes, edges }: LockGraphViewProps) {
       .attr('stroke-width', (d) => Math.min(3, d.wait_time_us / 50000 + 1))
       .attr('stroke-dasharray', (d) => d.mode === 'waiting' ? '5,3' : null)
 
-    // Draw link labels
     linkGroup.selectAll('text')
       .data(simLinks)
       .enter()
@@ -151,7 +226,6 @@ export default function LockGraphView({ nodes, edges }: LockGraphViewProps) {
       .attr('text-anchor', 'middle')
       .text((d) => d.mode)
 
-    // Draw nodes
     const nodeGroup = svg.append('g')
     const nodeElements = nodeGroup.selectAll('g')
       .data(simNodes)
@@ -160,17 +234,19 @@ export default function LockGraphView({ nodes, edges }: LockGraphViewProps) {
       .attr('cursor', 'pointer')
       .on('click', (_, d) => setSelectedNode(d as LockNode))
 
-    // Node circles
+    const isInCycle = (id: string) => cycles.some((c) => c.includes(id))
+    const cycleOpacity = 0.6 + 0.4 * Math.sin((animFrame / 30) * 2 * Math.PI)
+
     nodeElements.append('circle')
       .attr('r', (d) => d.type === 'lock' ? 24 : 20)
       .attr('fill', (d) => d.type === 'lock' ? '#d29922' : '#58a6ff')
       .attr('stroke', (d) => {
-        const isInCycle = cycles.some((c) => c.includes(d.id))
-        return isInCycle ? '#f85149' : '#30363d'
+        if (!isInCycle(d.id)) return '#30363d'
+        return '#f85149'
       })
-      .attr('stroke-width', (d) => cycles.some((c) => c.includes(d.id)) ? 3 : 1)
+      .attr('stroke-width', (d) => isInCycle(d.id) ? 3 : 1)
+      .attr('opacity', (d) => isInCycle(d.id) ? cycleOpacity : 1)
 
-    // Node labels
     nodeElements.append('text')
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'middle')
@@ -179,7 +255,6 @@ export default function LockGraphView({ nodes, edges }: LockGraphViewProps) {
       .attr('font-weight', '600')
       .text((d) => d.label.length > 10 ? d.label.substring(0, 8) + '..' : d.label)
 
-    // Node sub-labels
     nodeElements.append('text')
       .attr('text-anchor', 'middle')
       .attr('dy', '22px')
@@ -187,26 +262,19 @@ export default function LockGraphView({ nodes, edges }: LockGraphViewProps) {
       .attr('font-size', '9px')
       .text((d) => d.type === 'lock' ? '🔒' : `PID ${d.pid}`)
 
-    // Drag behavior
     const drag = d3.drag<SVGGElement, SimNode>()
       .on('start', (event, d) => {
         if (!event.active) simulation.alphaTarget(0.3).restart()
-        d.fx = d.x
-        d.fy = d.y
+        d.fx = d.x; d.fy = d.y
       })
-      .on('drag', (event, d) => {
-        d.fx = event.x
-        d.fy = event.y
-      })
+      .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y })
       .on('end', (event, d) => {
         if (!event.active) simulation.alphaTarget(0)
-        d.fx = null
-        d.fy = null
+        d.fx = null; d.fy = null
       })
 
     nodeElements.call(drag)
 
-    // Zoom
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.3, 3])
       .on('zoom', (event) => {
@@ -215,7 +283,6 @@ export default function LockGraphView({ nodes, edges }: LockGraphViewProps) {
 
     svg.call(zoom)
 
-    // Update positions on tick
     simulation.on('tick', () => {
       linkElements
         .attr('x1', (d: SimLink) => (d.source as SimNode).x ?? 0)
@@ -231,7 +298,7 @@ export default function LockGraphView({ nodes, edges }: LockGraphViewProps) {
     })
 
     return () => { simulation.stop() }
-  }, [displayNodes, displayEdges, cycles])
+  }, [displayNodes, displayEdges, cycles, animFrame])
 
   return (
     <div style={{ padding: '1.5rem' }}>
@@ -246,6 +313,7 @@ export default function LockGraphView({ nodes, edges }: LockGraphViewProps) {
               borderRadius: '12px',
               fontSize: '0.75rem',
               border: '1px solid var(--red)',
+              animation: 'pulse 1s infinite',
             }}>
               ⚠️ 检测到 {cycles.length} 个死锁环
             </span>
@@ -254,7 +322,7 @@ export default function LockGraphView({ nodes, edges }: LockGraphViewProps) {
         <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
           <span>🖱️ 拖拽节点 滚轮缩放</span>
           <span style={{ color: 'var(--border)' }}>|</span>
-          <span>🔵 PID 进程  🟡 🔒 锁对象  🔴 死锁</span>
+          <span>🔵 PID 进程  🟡 🔒 锁对象  🔴 死锁(脉冲)</span>
         </div>
       </div>
 
@@ -296,6 +364,7 @@ export default function LockGraphView({ nodes, edges }: LockGraphViewProps) {
               })}
             </div>
           ))}
+          <WaitTimeHistogram edges={displayEdges} />
         </div>
       )}
 
@@ -310,27 +379,11 @@ export default function LockGraphView({ nodes, edges }: LockGraphViewProps) {
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
             <h3 style={{ fontSize: '1rem' }}>{selectedNode.label}</h3>
-            <button
-              onClick={() => setSelectedNode(null)}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: 'var(--text-muted)',
-                cursor: 'pointer',
-              }}
-            >
-              ✕
-            </button>
+            <button onClick={() => setSelectedNode(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>✕</button>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem', fontSize: '0.875rem' }}>
-            <div>
-              <span style={{ color: 'var(--text-muted)' }}>类型: </span>
-              <span>{selectedNode.type}</span>
-            </div>
-            <div>
-              <span style={{ color: 'var(--text-muted)' }}>PID: </span>
-              <span>{selectedNode.pid || '-'}</span>
-            </div>
+            <div><span style={{ color: 'var(--text-muted)' }}>类型: </span><span>{selectedNode.type}</span></div>
+            <div><span style={{ color: 'var(--text-muted)' }}>PID: </span><span>{selectedNode.pid || '-'}</span></div>
           </div>
         </div>
       )}
