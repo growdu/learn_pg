@@ -46,7 +46,6 @@ export default function TemplateDialog({ onConfirm, onCancel }: Props) {
           <button onClick={onCancel} style={closeBtn}>×</button>
         </div>
 
-        {/* Template selector */}
         <div style={body}>
           <div style={{ display: 'flex', gap: '0.7rem', marginBottom: '1rem' }}>
             {ALL_TEMPLATES.map((t) => (
@@ -68,19 +67,16 @@ export default function TemplateDialog({ onConfirm, onCancel }: Props) {
             ))}
           </div>
 
-          {/* Description */}
           <div style={{ marginBottom: '0.9rem' }}>
             <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.35rem', fontWeight: 600 }}>说明</div>
             <div style={{ fontSize: '0.82rem', color: 'var(--text)' }}>{template.description}</div>
           </div>
 
-          {/* ASCII preview */}
           <div style={{ marginBottom: '0.9rem' }}>
             <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.35rem', fontWeight: 600 }}>拓扑预览</div>
             <div style={PREVIEW_STYLE}>{template.preview}</div>
           </div>
 
-          {/* Project name */}
           <div style={{ marginBottom: '0.9rem' }}>
             <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.35rem', fontWeight: 600 }}>项目名称</div>
             <input
@@ -92,7 +88,6 @@ export default function TemplateDialog({ onConfirm, onCancel }: Props) {
             />
           </div>
 
-          {/* Params */}
           <div style={{ marginBottom: '1rem' }}>
             <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.45rem', fontWeight: 600 }}>参数配置</div>
 
@@ -114,7 +109,7 @@ export default function TemplateDialog({ onConfirm, onCancel }: Props) {
               </div>
             </div>
 
-            <div>
+            <div style={{ marginBottom: '0.5rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '0.2rem' }}>
                 <span>复制延迟告警阈值</span>
                 <span style={{ fontWeight: 700, color: 'var(--text)' }}>{params.alertThresholdSec}s</span>
@@ -130,6 +125,38 @@ export default function TemplateDialog({ onConfirm, onCancel }: Props) {
               />
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                 <span>5s</span><span>300s</span>
+              </div>
+            </div>
+
+            <div style={{ marginTop: '0.6rem' }}>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.35rem', fontWeight: 600 }}>自动创建组件</div>
+              <label style={checkRow}>
+                <input type="checkbox" checked={params.createCollector} onChange={(e) => setParams((p) => ({ ...p, createCollector: e.target.checked }))} />
+                <span>采集组件 (collector)</span>
+              </label>
+              <label style={checkRow}>
+                <input type="checkbox" checked={params.createAnalyzer} onChange={(e) => setParams((p) => ({ ...p, createAnalyzer: e.target.checked }))} />
+                <span>分析组件 (analyzer)</span>
+              </label>
+              <label style={checkRow}>
+                <input type="checkbox" checked={params.createStorage} onChange={(e) => setParams((p) => ({ ...p, createStorage: e.target.checked }))} />
+                <span>存储组件 (storage)</span>
+              </label>
+            </div>
+
+            <div style={{ marginTop: '0.6rem' }}>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.35rem', fontWeight: 600 }}>
+                组件命名规则
+              </div>
+              <input
+                type="text"
+                value={params.componentNamePattern}
+                onChange={(e) => setParams((p) => ({ ...p, componentNamePattern: e.target.value }))}
+                style={input}
+                placeholder="{project}-{type}"
+              />
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                可用变量：`{'{project}'}`、`{'{type}'}`，例如：`{'{project}'}-{'{type}'}`
               </div>
             </div>
           </div>
@@ -203,6 +230,13 @@ const range: CSSProperties = {
   width: '100%',
   accentColor: 'var(--accent)',
   cursor: 'pointer',
+}
+const checkRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '0.45rem',
+  fontSize: '0.82rem',
+  marginBottom: '0.3rem',
 }
 const footer: CSSProperties = {
   display: 'flex', justifyContent: 'flex-end', gap: '0.6rem',

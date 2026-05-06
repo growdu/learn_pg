@@ -59,7 +59,7 @@ function saveProjects(projects: WorkspaceProject[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(projects))
 }
 
-function makeDefaultNode(idx: number): ClusterNodeConfig {
+function makeDefaultNode(idx: number, role: ClusterNodeConfig['role'] = idx === 1 ? 'primary' : 'standby'): ClusterNodeConfig {
   const cfg = usePGStore.getState().config
   return {
     id: genId(),
@@ -69,8 +69,8 @@ function makeDefaultNode(idx: number): ClusterNodeConfig {
     user: cfg.user,
     password: cfg.password,
     database: cfg.database,
-    cluster_type: 'physical',
-    role: idx === 1 ? 'primary' : 'standby',
+    cluster_type: role === 'publisher' || role === 'subscriber' ? 'logical' : 'physical',
+    role,
   }
 }
 
@@ -82,6 +82,7 @@ function App() {
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const [selectedClusterId, setSelectedClusterId] = useState('')
   const [showTemplateDialog, setShowTemplateDialog] = useState(false)
+  const [highlightedComponentIds, setHighlightedComponentIds] = useState<string[]>([])
 
   const storeConnected = usePGStore((s) => s.connected)
   const storeVersion = usePGStore((s) => s.version)
@@ -126,6 +127,8 @@ function App() {
     setProjects(next)
     setSelectedProjectId(project.id)
     if (project.clusters[0]) setSelectedClusterId(project.clusters[0].id)
+    setHighlightedComponentIds(project.components.map((c) => c.id))
+    setCurrentView('component_home')
   }
 
   const removeProject = (id: string) => {
@@ -272,6 +275,7 @@ function App() {
             onCreateComponent={createComponent}
             onRemoveComponent={removeComponent}
             onToggleLink={toggleLink}
+            highlightedComponentIds={highlightedComponentIds}
             onActivateNode={(clusterId, nodeId) => {
               setSelectedClusterId(clusterId)
               setCurrentView('cluster_home')
