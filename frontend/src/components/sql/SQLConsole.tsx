@@ -1,8 +1,8 @@
-import { useState, useRef } from 'react'
+﻿import { useRef, useState } from 'react'
 import type { ExecuteResponse } from '../../types/pg'
 import { usePGStore } from '../../stores/pgStore'
+import NodePageHeader from '../common/NodePageHeader'
 
-// Normalize backend PascalCase fields to camelCase
 function normalizeResponse(raw: ExecuteResponse): ExecuteResponse {
   const r = raw.result as unknown as Record<string, unknown>
   if (!r) return raw
@@ -26,12 +26,8 @@ function normalizeResponse(raw: ExecuteResponse): ExecuteResponse {
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 
-interface SQLConsoleProps {}
-
-export default function SQLConsole(_props: SQLConsoleProps) {
-  // Global store — persists across page navigations
+export default function SQLConsole() {
   const { connected, config } = usePGStore()
-
   const [sql, setSql] = useState('SELECT 1;')
   const [output, setOutput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -52,9 +48,7 @@ export default function SQLConsole(_props: SQLConsoleProps) {
       if (norm.success && norm.result) {
         const result = norm.result
         let out = ''
-        if (result.columns?.length) {
-          out += result.columns.map((c) => c.name).join('\t') + '\n'
-        }
+        if (result.columns?.length) out += result.columns.map((c) => c.name).join('\t') + '\n'
         result.rows?.forEach((row: Record<string, string>) => {
           out += result.columns.map((c) => row[c.name] || '').join('\t') + '\n'
         })
@@ -70,26 +64,14 @@ export default function SQLConsole(_props: SQLConsoleProps) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-      {/* Connection status banner */}
-      <div style={{
-        padding: '0.5rem 1rem',
-        background: 'var(--green)',
-        color: 'white',
-        borderRadius: '6px',
-        fontSize: '0.8rem',
-        fontFamily: 'Consolas, monospace',
-      }}>
-        Connected: {config.host}:{config.port}/{config.database}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1.5rem' }}>
+      <NodePageHeader title="SQL 控制台" source="/api/execute" updatedAtText={new Date().toLocaleTimeString('zh-CN', { hour12: false })} />
+
+      <div style={{ padding: '0.5rem 1rem', background: connected ? 'var(--green)' : 'var(--bg-tertiary)', color: 'white', borderRadius: '6px', fontSize: '0.8rem', fontFamily: 'Consolas, monospace' }}>
+        {connected ? `已连接: ${config.host}:${config.port}/${config.database}` : '未连接节点'}
       </div>
 
-      {/* SQL Input */}
-      <div style={{
-        padding: '1rem',
-        background: 'var(--bg-secondary)',
-        borderRadius: '8px',
-        border: '1px solid var(--border)',
-      }}>
+      <div style={{ padding: '1rem', background: 'var(--bg-secondary)', borderRadius: '8px', border: '1px solid var(--border)' }}>
         <textarea
           ref={textareaRef}
           value={sql}
@@ -97,78 +79,25 @@ export default function SQLConsole(_props: SQLConsoleProps) {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
               e.preventDefault()
-              handleExecute()
+              void handleExecute()
             }
           }}
-          style={{
-            width: '100%',
-            minHeight: '120px',
-            padding: '0.75rem',
-            background: 'var(--bg)',
-            color: 'var(--text)',
-            border: '1px solid var(--border)',
-            borderRadius: '4px',
-            fontFamily: 'Consolas, Monaco, "Courier New", monospace',
-            fontSize: '0.875rem',
-            resize: 'vertical',
-          }}
-          placeholder="输入 SQL 语句，按 Ctrl+Enter 执行"
+          style={{ width: '100%', minHeight: '140px', padding: '0.75rem', background: 'var(--bg)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: '4px', fontFamily: 'Consolas, Monaco, "Courier New", monospace', fontSize: '0.875rem', resize: 'vertical' }}
+          placeholder="输入 SQL，按 Ctrl+Enter 执行"
         />
-        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-          <button
-            onClick={handleExecute}
-            disabled={loading || !connected}
-            style={{
-              padding: '0.5rem 1.5rem',
-              background: connected ? 'var(--accent)' : 'var(--bg-tertiary)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: connected ? 'pointer' : 'not-allowed',
-              fontSize: '0.875rem',
-            }}
-          >
+        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem' }}>
+          <button onClick={() => void handleExecute()} disabled={loading || !connected} style={{ padding: '0.5rem 1.5rem', background: connected ? 'var(--accent)' : 'var(--bg-tertiary)', color: 'white', border: 'none', borderRadius: '4px', cursor: connected ? 'pointer' : 'not-allowed', fontSize: '0.875rem' }}>
             {loading ? '执行中...' : '执行 (Ctrl+Enter)'}
           </button>
-          <button
-            onClick={() => setSql('')}
-            style={{
-              padding: '0.5rem 1rem',
-              background: 'transparent',
-              color: 'var(--text-muted)',
-              border: '1px solid var(--border)',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '0.875rem',
-            }}
-          >
+          <button onClick={() => setSql('')} style={{ padding: '0.5rem 1rem', background: 'transparent', color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: '4px', cursor: 'pointer', fontSize: '0.875rem' }}>
             清空
           </button>
         </div>
       </div>
 
-      {/* Output */}
-      <div style={{
-        padding: '1rem',
-        background: 'var(--bg)',
-        borderRadius: '8px',
-        border: '1px solid var(--border)',
-        minHeight: '200px',
-      }}>
-        <div style={{
-          fontSize: '0.75rem',
-          color: 'var(--text-muted)',
-          marginBottom: '0.5rem',
-        }}>
-          结果
-        </div>
-        <pre style={{
-          fontFamily: 'Consolas, Monaco, "Courier New", monospace',
-          fontSize: '0.875rem',
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-all',
-          color: output.startsWith('ERROR') ? 'var(--red)' : 'var(--text)',
-        }}>
+      <div style={{ padding: '1rem', background: 'var(--bg)', borderRadius: '8px', border: '1px solid var(--border)', minHeight: '220px' }}>
+        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>执行结果</div>
+        <pre style={{ fontFamily: 'Consolas, Monaco, "Courier New", monospace', fontSize: '0.875rem', whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: output.startsWith('ERROR') ? 'var(--red)' : 'var(--text)' }}>
           {output || '暂无输出'}
         </pre>
       </div>

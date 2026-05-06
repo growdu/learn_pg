@@ -21,6 +21,9 @@ export interface ReplicationChannel {
   flush_lsn?: string
   replay_lsn?: string
   lag_bytes?: number
+  write_lag?: string
+  flush_lag?: string
+  replay_lag?: string
 }
 
 export interface LogicalSubscription {

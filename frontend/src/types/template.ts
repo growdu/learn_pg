@@ -1,25 +1,8 @@
-import type { ClusterNodeConfig } from './cluster'
+﻿import type { ClusterNodeConfig } from './cluster'
 import type { WorkspaceProject, WorkspaceComponent, WorkspaceCluster } from './workspace'
 
 export type ReplicationTemplate = 'physical' | 'logical'
 export type ClusterNodeRole = 'primary' | 'standby' | 'publisher' | 'subscriber'
-
-export interface TemplateNode {
-  name: string
-  role: ClusterNodeRole
-}
-
-export interface TemplateCluster {
-  name: string
-  replicationType: ReplicationTemplate
-  nodes: TemplateNode[]
-}
-
-export interface TemplateComponent {
-  name: string
-  componentType: WorkspaceComponent['componentType']
-  linkedClusterName: string
-}
 
 export interface TemplateParams {
   nodeCount: number
@@ -41,15 +24,22 @@ export interface WorkspaceTemplate {
 
 const genId = () => crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)
 
-function resolveComponentName(pattern: string, projectName: string, type: WorkspaceComponent['componentType'], fallback: string): string {
-  const p = pattern
-    .replaceAll('{project}', projectName)
-    .replaceAll('{type}', type)
-    .trim()
+function resolveComponentName(
+  pattern: string,
+  projectName: string,
+  type: WorkspaceComponent['componentType'],
+  fallback: string,
+): string {
+  const p = pattern.replaceAll('{project}', projectName).replaceAll('{type}', type).trim()
   return p.length > 0 ? p : fallback
 }
 
-function buildComponents(template: ReplicationTemplate, projectName: string, clusterId: string, params: TemplateParams): WorkspaceComponent[] {
+function buildComponents(
+  template: ReplicationTemplate,
+  projectName: string,
+  clusterId: string,
+  params: TemplateParams,
+): WorkspaceComponent[] {
   const out: WorkspaceComponent[] = []
   if (params.createCollector) {
     const fallback = template === 'physical' ? '物理复制采集组件' : '逻辑复制采集组件'
@@ -102,6 +92,7 @@ export const PHYSICAL_TEMPLATE: WorkspaceTemplate = {
       id: genId(),
       name: '主从集群',
       replicationType: 'physical',
+      alertThresholdSec: params.alertThresholdSec,
       nodes,
     }
     return {
@@ -134,6 +125,7 @@ export const LOGICAL_TEMPLATE: WorkspaceTemplate = {
       id: genId(),
       name: '发布订阅集群',
       replicationType: 'logical',
+      alertThresholdSec: params.alertThresholdSec,
       nodes,
     }
     return {

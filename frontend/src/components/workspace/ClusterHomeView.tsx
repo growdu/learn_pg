@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+﻿import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { usePGStore } from '../../stores/pgStore'
 import type { View } from '../../App'
 import type { WorkspaceProject } from '../../types/workspace'
-import type { ClusterNodeConfig, ClusterNodeStatus, ClusterOverviewResponse } from '../../types/cluster'
+import type { ClusterNodeConfig, ClusterNodeStatus, ClusterOverviewResponse, ReplicationChannel } from '../../types/cluster'
 
 interface Props {
   project: WorkspaceProject | undefined
@@ -23,6 +23,12 @@ interface OverviewState {
   timestamp: number
 }
 
+interface EdgeInfo {
+  from: string
+  to: string
+  label: string
+}
+
 export default function ClusterHomeView(props: Props) {
   const { setConfig, setConnected, setVersion } = usePGStore()
   const [overview, setOverview] = useState<OverviewState>({ loading: false, error: '', nodes: [], timestamp: 0 })
@@ -33,6 +39,9 @@ export default function ClusterHomeView(props: Props) {
     () => props.project?.clusters.find((c) => c.id === props.selectedClusterId) ?? props.project?.clusters[0],
     [props.project, props.selectedClusterId],
   )
+
+  const alertThresholdSec = cluster?.alertThresholdSec ?? 30
+  const alertThresholdBytes = alertThresholdSec * 1024 * 1024
 
   const requestNodes = useMemo(() => {
     if (!props.project) return []
@@ -70,9 +79,7 @@ export default function ClusterHomeView(props: Props) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = (await res.json()) as ClusterOverviewResponse
         if (!data.success) throw new Error(data.error || '获取集群状态失败')
-        if (!stop) {
-          setOverview({ loading: false, error: '', nodes: data.nodes || [], timestamp: data.timestamp || Date.now() })
-        }
+        if (!stop) setOverview({ loading: false, error: '', nodes: data.nodes || [], timestamp: data.timestamp || Date.now() })
       } catch (err) {
         if (!stop) {
           const msg = err instanceof Error ? err.message : '获取集群状态失败'
@@ -119,7 +126,7 @@ export default function ClusterHomeView(props: Props) {
   }, [props.project, overview.nodes])
 
   const topologyEdges = useMemo(() => {
-    if (!cluster) return [] as Array<{ from: string; to: string; label: string }>
+    if (!cluster) return [] as EdgeInfo[]
     const nodes = cluster.nodes
     if (cluster.replicationType === 'physical') {
       const primary = nodes.find((n) => n.role === 'primary') ?? nodes[0]
@@ -137,31 +144,49 @@ export default function ClusterHomeView(props: Props) {
     const fromNode = cluster.nodes.find((n) => n.id === fromId)
     const toNode = cluster.nodes.find((n) => n.id === toId)
     if (!fromNode || !toNode) return null
+
     const fromStatus = clusterStatuses.find((s) => s.id === fromId)
     const toStatus = clusterStatuses.find((s) => s.id === toId)
 
     if (cluster.replicationType === 'physical') {
-      const ch = fromStatus?.physical_replication?.[0]
+      const ch = pickChannel(fromStatus?.physical_replication, toNode.name)
+      const lagBytes = ch?.lag_bytes ?? 0
       return {
+        mode: '物理复制',
         from: fromNode.name,
         to: toNode.name,
-        mode: '物理复制',
         state: ch?.state || '-',
-        sync: ch?.sync_state || '-',
-        lag: ch?.lag_bytes?.toString() || '-',
+        syncState: ch?.sync_state || '-',
+        sentLSN: ch?.sent_lsn || '-',
+        writeLSN: ch?.write_lsn || '-',
+        flushLSN: ch?.flush_lsn || '-',
+        replayLSN: ch?.replay_lsn || '-',
+        writeLag: ch?.write_lag || '-',
+        flushLag: ch?.flush_lag || '-',
+        replayLag: ch?.replay_lag || '-',
+        lagBytes,
+        isAlert: lagBytes >= alertThresholdBytes,
       }
     }
 
     const sub = toStatus?.subscriptions?.[0]
     return {
+      mode: '逻辑复制',
       from: fromNode.name,
       to: toNode.name,
-      mode: '逻辑复制',
       state: sub?.enabled ? 'enabled' : 'disabled',
-      sync: sub?.worker_type || '-',
-      lag: sub?.latest_end_lsn || '-',
+      syncState: sub?.worker_type || '-',
+      sentLSN: '-',
+      writeLSN: '-',
+      flushLSN: '-',
+      replayLSN: sub?.latest_end_lsn || '-',
+      writeLag: '-',
+      flushLag: '-',
+      replayLag: sub?.latest_end_time || '-',
+      lagBytes: 0,
+      isAlert: false,
     }
-  }, [cluster, clusterStatuses, selectedEdgeKey])
+  }, [cluster, clusterStatuses, selectedEdgeKey, alertThresholdBytes])
 
   return (
     <div style={{ padding: '1rem' }}>
@@ -194,6 +219,7 @@ export default function ClusterHomeView(props: Props) {
                     <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                       {c.replicationType === 'physical' ? '物理复制' : '逻辑复制'} | 节点: {c.nodes.length} | 在线: {online}
                     </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>告警阈值: {c.alertThresholdSec ?? 30}s</div>
                     <div style={{ marginTop: '0.45rem', display: 'flex', gap: '0.4rem' }}>
                       <button onClick={() => props.onSelectCluster(c.id)} style={smallBtn}>选择</button>
                       <button onClick={() => props.onRemoveCluster(c.id)} style={smallBtnDanger}>删除</button>
@@ -205,7 +231,6 @@ export default function ClusterHomeView(props: Props) {
 
             <div style={panel}>
               {!cluster && <div style={{ color: 'var(--text-muted)' }}>请选择集群查看拓扑、同步状态和节点管理。</div>}
-
               {cluster && (
                 <>
                   <h3 style={{ marginTop: 0 }}>{cluster.name} · 拓扑</h3>
@@ -216,17 +241,36 @@ export default function ClusterHomeView(props: Props) {
                       edges={topologyEdges}
                       selectedEdgeKey={selectedEdgeKey}
                       selectedNodeId={selectedNodeId}
-                      onEdgeClick={(key) => { setSelectedEdgeKey(key); setSelectedNodeId('') }}
-                      onNodeClick={(nodeId) => { setSelectedNodeId(nodeId); setSelectedEdgeKey('') }}
+                      onEdgeClick={(key) => {
+                        setSelectedEdgeKey(key)
+                        setSelectedNodeId('')
+                      }}
+                      onNodeClick={(nodeId) => {
+                        setSelectedNodeId(nodeId)
+                        setSelectedEdgeKey('')
+                      }}
                     />
-                    {(selectedEdgeDetail || selectedNodeId) && (
-                      <div style={{ marginTop: '0.5rem', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                        {selectedEdgeDetail && (
-                          <div>
-                            链路详情: {selectedEdgeDetail.from} -> {selectedEdgeDetail.to} | 模式: {selectedEdgeDetail.mode} | state: {selectedEdgeDetail.state} | sync: {selectedEdgeDetail.sync} | lag/lsn: {selectedEdgeDetail.lag}
-                          </div>
-                        )}
-                        {selectedNodeId && <div>已选择节点，可在下方点击“激活节点”进入单节点观测。</div>}
+
+                    {selectedEdgeDetail && (
+                      <div style={{ marginTop: '0.45rem', borderTop: '1px dashed var(--border)', paddingTop: '0.45rem', fontSize: '0.78rem' }}>
+                        <div style={{ fontWeight: 700 }}>
+                          链路详情: {selectedEdgeDetail.from} -> {selectedEdgeDetail.to}
+                          <span style={{ marginLeft: '0.5rem', color: selectedEdgeDetail.isAlert ? 'var(--red)' : 'var(--green)' }}>
+                            {selectedEdgeDetail.isAlert ? '告警' : '正常'}
+                          </span>
+                        </div>
+                        <div style={{ color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                          模式: {selectedEdgeDetail.mode} | state: {selectedEdgeDetail.state} | sync: {selectedEdgeDetail.syncState}
+                        </div>
+                        <div style={{ color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                          sent/write/flush/replay: {selectedEdgeDetail.sentLSN} / {selectedEdgeDetail.writeLSN} / {selectedEdgeDetail.flushLSN} / {selectedEdgeDetail.replayLSN}
+                        </div>
+                        <div style={{ color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                          writeLag/flushLag/replayLag: {selectedEdgeDetail.writeLag} / {selectedEdgeDetail.flushLag} / {selectedEdgeDetail.replayLag}
+                        </div>
+                        <div style={{ color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                          lag_bytes: {selectedEdgeDetail.lagBytes}（阈值: {alertThresholdBytes}）
+                        </div>
                       </div>
                     )}
                   </div>
@@ -244,6 +288,9 @@ export default function ClusterHomeView(props: Props) {
                         </div>
                         <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
                           角色: {n.role} | in_recovery: {String(n.in_recovery)} | 版本: {n.version || '-'}
+                        </div>
+                        <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                          current_lsn: {n.current_lsn || '-'} | replay_lsn: {n.replay_lsn || '-'}
                         </div>
                       </div>
                     ))}
@@ -282,6 +329,12 @@ export default function ClusterHomeView(props: Props) {
   )
 }
 
+function pickChannel(channels: ReplicationChannel[] | undefined, nodeName: string): ReplicationChannel | undefined {
+  if (!channels || channels.length === 0) return undefined
+  const key = nodeName.toLowerCase()
+  return channels.find((c) => c.name.toLowerCase().includes(key)) ?? channels[0]
+}
+
 function SummaryCard({ label, value, accent = 'var(--text)' }: { label: string; value: string; accent?: string }) {
   return (
     <div style={{ border: '1px solid var(--border)', borderRadius: '10px', background: 'var(--bg-secondary)', padding: '0.6rem 0.75rem' }}>
@@ -302,7 +355,7 @@ function TopologyMap({
 }: {
   cluster: WorkspaceProject['clusters'][number]
   statuses: ClusterNodeStatus[]
-  edges: Array<{ from: string; to: string; label: string }>
+  edges: EdgeInfo[]
   selectedEdgeKey: string
   selectedNodeId: string
   onEdgeClick: (key: string) => void
@@ -349,7 +402,17 @@ function TopologyMap({
         const active = selectedNodeId === p.id
         return (
           <g key={p.id} onClick={() => onNodeClick(p.id)} style={{ cursor: 'pointer' }}>
-            <rect x={p.x} y={p.y} width={nodeWidth} height={nodeHeight} rx={8} ry={8} fill={ok ? 'rgba(34,197,94,0.15)' : 'rgba(248,113,113,0.12)'} stroke={active ? '#60a5fa' : ok ? '#22c55e' : '#f87171'} strokeWidth={active ? 2 : 1.2} />
+            <rect
+              x={p.x}
+              y={p.y}
+              width={nodeWidth}
+              height={nodeHeight}
+              rx={8}
+              ry={8}
+              fill={ok ? 'rgba(34,197,94,0.15)' : 'rgba(248,113,113,0.12)'}
+              stroke={active ? '#60a5fa' : ok ? '#22c55e' : '#f87171'}
+              strokeWidth={active ? 2 : 1.2}
+            />
             <text x={p.x + 10} y={p.y + 18} fontSize="11" fill="var(--text)">{p.node.name}</text>
             <text x={p.x + 10} y={p.y + 33} fontSize="10" fill="#94a3b8">{p.node.role}</text>
           </g>
@@ -359,8 +422,28 @@ function TopologyMap({
   )
 }
 
-const panel: CSSProperties = { border: '1px solid var(--border)', borderRadius: '10px', background: 'var(--bg-secondary)', padding: '0.75rem' }
-const btn: CSSProperties = { padding: '0.42rem 0.75rem', border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }
+const panel: CSSProperties = {
+  border: '1px solid var(--border)',
+  borderRadius: '10px',
+  background: 'var(--bg-secondary)',
+  padding: '0.75rem',
+}
+const btn: CSSProperties = {
+  padding: '0.42rem 0.75rem',
+  border: '1px solid var(--border)',
+  borderRadius: '6px',
+  background: 'var(--bg)',
+  color: 'var(--text)',
+  cursor: 'pointer',
+}
 const smallBtn: CSSProperties = { ...btn, padding: '0.25rem 0.6rem', fontSize: '0.78rem' }
 const smallBtnDanger: CSSProperties = { ...smallBtn, color: 'var(--red)' }
-const input: CSSProperties = { width: '100%', padding: '0.4rem 0.5rem', border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.8rem' }
+const input: CSSProperties = {
+  width: '100%',
+  padding: '0.4rem 0.5rem',
+  border: '1px solid var(--border)',
+  borderRadius: '6px',
+  background: 'var(--bg)',
+  color: 'var(--text)',
+  fontSize: '0.8rem',
+}

@@ -11,6 +11,7 @@ export interface WorkspaceCluster {
   id: string
   name: string
   replicationType: 'physical' | 'logical'
+  alertThresholdSec?: number
   nodes: ClusterNodeConfig[]
 }
 

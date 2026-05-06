@@ -30,9 +30,14 @@ export default function Sidebar({ currentView, onNavigate, projectActive, nodeAc
         <NavBtn label="SQL 控制台" active={currentView === 'sql'} onClick={() => onNavigate('sql')} disabled={!nodeActive} />
         <NavBtn label="WAL 查看" active={currentView === 'wal'} onClick={() => onNavigate('wal')} disabled={!nodeActive} />
         <NavBtn label="CLOG 查看" active={currentView === 'clog'} onClick={() => onNavigate('clog')} disabled={!nodeActive} />
+        <NavBtn label="写入链路" active={currentView === 'write'} onClick={() => onNavigate('write')} disabled={!nodeActive} />
+        <NavBtn label="读取链路" active={currentView === 'read'} onClick={() => onNavigate('read')} disabled={!nodeActive} />
+        <NavBtn label="事务链路" active={currentView === 'transaction'} onClick={() => onNavigate('transaction')} disabled={!nodeActive} />
+        <NavBtn label="Buffer 热图" active={currentView === 'buffer'} onClick={() => onNavigate('buffer')} disabled={!nodeActive} />
         <NavBtn label="锁等待图" active={currentView === 'lock'} onClick={() => onNavigate('lock')} disabled={!nodeActive} />
         <NavBtn label="事务状态机" active={currentView === 'xact_state'} onClick={() => onNavigate('xact_state')} disabled={!nodeActive} />
         <NavBtn label="内存结构" active={currentView === 'memory'} onClick={() => onNavigate('memory')} disabled={!nodeActive} />
+        <NavBtn label="执行计划树" active={currentView === 'plan'} onClick={() => onNavigate('plan')} disabled={!nodeActive} />
       </Section>
     </aside>
   )

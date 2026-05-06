@@ -23,17 +23,23 @@ import (
 
 // Handler holds API dependencies
 type Handler struct {
-	config   *config.Config
-	pgClient *pg.Client
-	hub      *ws.Hub
+	config    *config.Config
+	pgClient  *pg.Client
+	hub       *ws.Hub
+	workspace *workspaceStore
 }
 
 // NewHandler creates a new API handler
 func NewHandler(cfg *config.Config, hub *ws.Hub) *Handler {
 	return &Handler{
-		config: cfg,
-		hub:    hub,
+		config:    cfg,
+		hub:       hub,
+		workspace: newWorkspaceStore(defaultWorkspaceFilePath()),
 	}
+}
+
+func defaultWorkspaceFilePath() string {
+	return filepath.Join("data", "workspace_projects.json")
 }
 
 // SetPGClient sets the PostgreSQL client
@@ -200,6 +206,21 @@ type executeResponse struct {
 	Error   string            `json:"error,omitempty"`
 }
 
+type workspaceProjectsResponse struct {
+	Success       bool               `json:"success"`
+	SchemaVersion int                `json:"schemaVersion"`
+	Projects      []workspaceProject `json:"projects"`
+	Error         string             `json:"error,omitempty"`
+}
+
+type workspaceProjectRequest struct {
+	Project workspaceProject `json:"project"`
+}
+
+type workspaceBulkRequest struct {
+	Projects []workspaceProject `json:"projects"`
+}
+
 type clusterNodeRequest struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -240,6 +261,9 @@ type replicationChannel struct {
 	FlushLSN  string `json:"flush_lsn,omitempty"`
 	ReplayLSN string `json:"replay_lsn,omitempty"`
 	LagBytes  int64  `json:"lag_bytes,omitempty"`
+	WriteLag  string `json:"write_lag,omitempty"`
+	FlushLag  string `json:"flush_lag,omitempty"`
+	ReplayLag string `json:"replay_lag,omitempty"`
 }
 
 type logicalSubscription struct {
@@ -310,6 +334,86 @@ func (h *Handler) ServeExecute(w http.ResponseWriter, r *http.Request) {
 		Result:  result,
 		Error:   result.Error,
 	})
+}
+
+func (h *Handler) ServeWorkspaceProjects(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		projects, schemaVersion, err := h.workspace.readSnapshot()
+		if err != nil {
+			h.writeError(w, r, http.StatusInternalServerError, "failed to load workspace: "+err.Error())
+			return
+		}
+		writeJSON(w, r, http.StatusOK, workspaceProjectsResponse{
+			Success:       true,
+			SchemaVersion: schemaVersion,
+			Projects:      projects,
+		})
+		return
+	case http.MethodPost:
+		var req workspaceProjectRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024*1024)).Decode(&req); err != nil {
+			h.writeError(w, r, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if err := h.workspace.upsert(req.Project); err != nil {
+			h.writeError(w, r, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, r, http.StatusOK, map[string]any{"success": true})
+		return
+	case http.MethodPut:
+		var req workspaceBulkRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*1024*1024)).Decode(&req); err != nil {
+			h.writeError(w, r, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if req.Projects == nil {
+			req.Projects = []workspaceProject{}
+		}
+		if err := h.workspace.writeAll(req.Projects); err != nil {
+			h.writeError(w, r, http.StatusInternalServerError, "failed to save workspace: "+err.Error())
+			return
+		}
+		writeJSON(w, r, http.StatusOK, map[string]any{"success": true, "count": len(req.Projects)})
+		return
+	default:
+		h.writeError(w, r, http.StatusMethodNotAllowed, "GET/POST/PUT required")
+	}
+}
+
+func (h *Handler) ServeWorkspaceProjectByID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete && r.Method != http.MethodPut {
+		h.writeError(w, r, http.StatusMethodNotAllowed, "PUT/DELETE required")
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/api/workspace/projects/")
+	id = strings.TrimSpace(id)
+	if id == "" {
+		h.writeError(w, r, http.StatusBadRequest, "project id is required")
+		return
+	}
+
+	if r.Method == http.MethodDelete {
+		if err := h.workspace.deleteByID(id); err != nil {
+			h.writeError(w, r, http.StatusInternalServerError, "failed to delete project: "+err.Error())
+			return
+		}
+		writeJSON(w, r, http.StatusOK, map[string]any{"success": true})
+		return
+	}
+
+	var req workspaceProjectRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024*1024)).Decode(&req); err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	req.Project.ID = id
+	if err := h.workspace.upsert(req.Project); err != nil {
+		h.writeError(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, r, http.StatusOK, map[string]any{"success": true})
 }
 
 func (h *Handler) ServeClusterOverview(w http.ResponseWriter, r *http.Request) {
@@ -444,7 +548,10 @@ func (h *Handler) inspectClusterNode(node clusterNodeRequest) clusterNodeStatus 
 		       coalesce(write_lsn::text,'') AS write_lsn,
 		       coalesce(flush_lsn::text,'') AS flush_lsn,
 		       coalesce(replay_lsn::text,'') AS replay_lsn,
-		       coalesce(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)::bigint,0)::text AS lag_bytes
+		       coalesce(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)::bigint,0)::text AS lag_bytes,
+		       coalesce(write_lag::text,'') AS write_lag,
+		       coalesce(flush_lag::text,'') AS flush_lag,
+		       coalesce(replay_lag::text,'') AS replay_lag
 		FROM pg_stat_replication
 		ORDER BY application_name`); err == nil && rows != nil {
 		for _, row := range rows.Rows {
@@ -458,6 +565,9 @@ func (h *Handler) inspectClusterNode(node clusterNodeRequest) clusterNodeStatus 
 				FlushLSN:  row["flush_lsn"],
 				ReplayLSN: row["replay_lsn"],
 				LagBytes:  lag,
+				WriteLag:  row["write_lag"],
+				FlushLag:  row["flush_lag"],
+				ReplayLag: row["replay_lag"],
 			})
 		}
 	}
@@ -938,6 +1048,8 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	mux.HandleFunc("/livez", h.ServeLivez)
 	mux.HandleFunc("/api/connect", h.ServeConnect)
 	mux.HandleFunc("/api/execute", h.ServeExecute)
+	mux.HandleFunc("/api/workspace/projects", h.ServeWorkspaceProjects)
+	mux.HandleFunc("/api/workspace/projects/", h.ServeWorkspaceProjectByID)
 	mux.HandleFunc("/api/cluster/overview", h.ServeClusterOverview)
 	mux.HandleFunc("/api/cluster/node/inspect", h.ServeClusterNodeInspect)
 	mux.HandleFunc("/api/wal", h.ServeWAL)

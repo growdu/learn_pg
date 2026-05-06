@@ -11,7 +11,7 @@ import BufferHeatmapView from './components/buffer/BufferHeatmapView'
 import LockGraphView from './components/lock/LockGraphView'
 import MemoryStructView from './components/memory/MemoryStructView'
 import PlanTreeView from './components/pipeline/PlanTreeView'
-import TransactionStateView from './components/transaction/TransactionStateView'
+import TransactionStateView, { type TransactionState } from './components/transaction/TransactionStateView'
 import ProjectHomeView from './components/workspace/ProjectHomeView'
 import ClusterHomeView from './components/workspace/ClusterHomeView'
 import ComponentHomeView from './components/workspace/ComponentHomeView'
@@ -23,6 +23,7 @@ import type { ClusterNodeConfig } from './types/cluster'
 import type { WorkspaceComponent, WorkspaceProject } from './types/workspace'
 import type { ReplicationTemplate, TemplateParams } from './types/template'
 import { ALL_TEMPLATES } from './types/template'
+import type { LockEdge, LockNode } from './components/lock/LockGraphView'
 
 export type View =
   | 'project_home'
@@ -42,6 +43,7 @@ export type View =
   | 'plan'
 
 const STORAGE_KEY = 'pgv_workspace_projects'
+const WORKSPACE_SCHEMA_VERSION = 1
 const genId = () => crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)
 
 function loadProjects(): WorkspaceProject[] {
@@ -49,7 +51,7 @@ function loadProjects(): WorkspaceProject[] {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw) as WorkspaceProject[]
-    return Array.isArray(parsed) ? parsed : []
+    return Array.isArray(parsed) ? migrateWorkspaceProjects(parsed, 0) : []
   } catch {
     return []
   }
@@ -57,6 +59,50 @@ function loadProjects(): WorkspaceProject[] {
 
 function saveProjects(projects: WorkspaceProject[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(projects))
+}
+
+async function loadProjectsFromBackend(): Promise<WorkspaceProject[] | null> {
+  try {
+    const res = await fetch('/api/workspace/projects')
+    if (!res.ok) return null
+    const data = (await res.json()) as {
+      success?: boolean
+      schemaVersion?: number
+      projects?: WorkspaceProject[]
+    }
+    if (!data.success || !Array.isArray(data.projects)) return null
+    return migrateWorkspaceProjects(data.projects, data.schemaVersion ?? 0)
+  } catch {
+    return null
+  }
+}
+
+async function saveProjectsToBackend(projects: WorkspaceProject[]): Promise<boolean> {
+  try {
+    const res = await fetch('/api/workspace/projects', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schemaVersion: WORKSPACE_SCHEMA_VERSION, projects }),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+function migrateWorkspaceProjects(projects: WorkspaceProject[], _schemaVersion: number): WorkspaceProject[] {
+  return projects.map((p) => ({
+    ...p,
+    clusters: (p.clusters ?? []).map((c) => ({
+      ...c,
+      alertThresholdSec: c.alertThresholdSec && c.alertThresholdSec > 0 ? c.alertThresholdSec : 30,
+      nodes: c.nodes ?? [],
+    })),
+    components: (p.components ?? []).map((m) => ({
+      ...m,
+      linkedClusterIds: m.linkedClusterIds ?? [],
+    })),
+  }))
 }
 
 function makeDefaultNode(idx: number, role: ClusterNodeConfig['role'] = idx === 1 ? 'primary' : 'standby'): ClusterNodeConfig {
@@ -83,6 +129,11 @@ function App() {
   const [selectedClusterId, setSelectedClusterId] = useState('')
   const [showTemplateDialog, setShowTemplateDialog] = useState(false)
   const [highlightedComponentIds, setHighlightedComponentIds] = useState<string[]>([])
+  const [workspaceBootstrapped, setWorkspaceBootstrapped] = useState(false)
+  const [workspaceSyncError, setWorkspaceSyncError] = useState('')
+  const [snapshotLocks, setSnapshotLocks] = useState<{ nodes: LockNode[]; edges: LockEdge[] }>({ nodes: [], edges: [] })
+  const [snapshotTransactions, setSnapshotTransactions] = useState<TransactionState[]>([])
+  const [snapshotBackends, setSnapshotBackends] = useState<Array<Record<string, string>>>([])
 
   const storeConnected = usePGStore((s) => s.connected)
   const storeVersion = usePGStore((s) => s.version)
@@ -96,8 +147,76 @@ function App() {
   }, [storeConnected, storeVersion])
 
   useEffect(() => {
+    let stop = false
+    ;(async () => {
+      const remote = await loadProjectsFromBackend()
+      if (stop) return
+      if (remote) {
+        setProjects(remote)
+        setWorkspaceSyncError('')
+        if (remote[0]) {
+          setSelectedProjectId(remote[0].id)
+          setSelectedClusterId(remote[0].clusters[0]?.id ?? '')
+        }
+      } else {
+        setWorkspaceSyncError('工作区后端不可用，当前使用本地缓存。')
+      }
+      setWorkspaceBootstrapped(true)
+    })()
+    return () => {
+      stop = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!workspaceBootstrapped) return
     saveProjects(projects)
-  }, [projects])
+    const t = window.setTimeout(() => {
+      void (async () => {
+        const ok = await saveProjectsToBackend(projects)
+        setWorkspaceSyncError(ok ? '' : '工作区保存失败，变更仅保存在本地缓存。')
+      })()
+    }, 250)
+    return () => window.clearTimeout(t)
+  }, [projects, workspaceBootstrapped])
+
+  useEffect(() => {
+    let stop = false
+
+    const loadSnapshot = async () => {
+      if (!connected) {
+        if (!stop) {
+          setSnapshotLocks({ nodes: [], edges: [] })
+          setSnapshotTransactions([])
+          setSnapshotBackends([])
+        }
+        return
+      }
+      try {
+        const res = await fetch('/api/snapshot')
+        if (!res.ok) return
+        const data = (await res.json()) as {
+          current_xid?: number
+          backends?: Array<Record<string, string>>
+          locks?: Array<Record<string, string>>
+        }
+        if (stop) return
+        const { nodes, edges } = buildLockGraphFromSnapshot(data.backends ?? [], data.locks ?? [])
+        setSnapshotLocks({ nodes, edges })
+        setSnapshotTransactions(buildTransactionsFromSnapshot(data.backends ?? [], data.current_xid ?? 0))
+        setSnapshotBackends(data.backends ?? [])
+      } catch {
+        // keep last successful snapshot
+      }
+    }
+
+    void loadSnapshot()
+    const timer = window.setInterval(loadSnapshot, 5000)
+    return () => {
+      stop = true
+      window.clearInterval(timer)
+    }
+  }, [connected])
 
   const selectedProject = useMemo(
     () => projects.find((p) => p.id === selectedProjectId) ?? projects[0],
@@ -143,7 +262,13 @@ function App() {
   const createCluster = () => {
     if (!selectedProject) return
     const idx = selectedProject.clusters.length + 1
-    const cluster = { id: genId(), name: `集群 ${idx}`, replicationType: 'physical' as const, nodes: [makeDefaultNode(1)] }
+    const cluster = {
+      id: genId(),
+      name: `集群 ${idx}`,
+      replicationType: 'physical' as const,
+      alertThresholdSec: 30,
+      nodes: [makeDefaultNode(1)],
+    }
     const next = projects.map((p) => (p.id === selectedProject.id ? { ...p, clusters: [...p.clusters, cluster] } : p))
     setProjects(next)
     setSelectedClusterId(cluster.id)
@@ -301,13 +426,17 @@ function App() {
       case 'transaction':
         return <PipelineView type="transaction" />
       case 'xact_state':
-        return <TransactionStateView transactions={transactions.length > 0 ? transactions : undefined} />
+        return (
+          <TransactionStateView
+            transactions={snapshotTransactions.length > 0 ? snapshotTransactions : transactions.length > 0 ? transactions : undefined}
+          />
+        )
       case 'buffer':
         return <BufferHeatmapView buffers={buffers.length > 0 ? buffers : undefined} />
       case 'lock':
-        return <LockGraphView />
+        return <LockGraphView nodes={snapshotLocks.nodes.length > 0 ? snapshotLocks.nodes : undefined} edges={snapshotLocks.edges.length > 0 ? snapshotLocks.edges : undefined} />
       case 'memory':
-        return <MemoryStructView />
+        return <MemoryStructView snapshotBackends={snapshotBackends} />
       case 'plan':
         return <PlanTreeView />
       default:
@@ -325,6 +454,11 @@ function App() {
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <Sidebar currentView={currentView} onNavigate={setCurrentView} projectActive={projectActive} nodeActive={nodeActive} nodeLabel={nodeLabel} />
         <main style={{ flex: 1, overflow: 'auto', padding: '0' }}>
+          {workspaceSyncError && (
+            <div style={{ padding: '0.5rem 1rem', borderBottom: '1px solid var(--border)', background: 'rgba(245,158,11,0.12)', color: '#f59e0b', fontSize: '0.8rem' }}>
+              {workspaceSyncError}
+            </div>
+          )}
           <div style={{ padding: '0.6rem 1rem', borderBottom: '1px solid var(--border)', background: 'var(--bg-secondary)', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
             {['project_home', 'cluster_home', 'component_home'].includes(currentView)
               ? `项目工作区 / ${selectedProject?.name ?? '未选择项目'}`
@@ -345,3 +479,81 @@ function App() {
 }
 
 export default App
+
+function buildLockGraphFromSnapshot(
+  backends: Array<Record<string, string>>,
+  locks: Array<Record<string, string>>,
+): { nodes: LockNode[]; edges: LockEdge[] } {
+  const nodes: LockNode[] = []
+  const edges: LockEdge[] = []
+
+  const backendByPID = new Map<string, LockNode>()
+  for (const b of backends) {
+    const pid = Number(b.pid ?? 0)
+    const id = `pid-${pid}`
+    const node: LockNode = {
+      id,
+      pid,
+      label: `PID ${pid}`,
+      type: 'backend',
+    }
+    nodes.push(node)
+    backendByPID.set(String(pid), node)
+  }
+
+  const lockNodeByKey = new Map<string, LockNode>()
+  for (const l of locks) {
+    const lockKey = [
+      l.locktype ?? '',
+      l.relation ?? '',
+      l.virtualxid ?? '',
+      l.transactionid ?? '',
+      l.mode ?? '',
+    ].join('|')
+    if (!lockNodeByKey.has(lockKey)) {
+      const ln: LockNode = {
+        id: `lock-${lockNodeByKey.size + 1}`,
+        pid: 0,
+        label: `${l.locktype ?? 'lock'}:${l.relation || l.transactionid || l.virtualxid || '-'}`,
+        type: 'lock',
+      }
+      lockNodeByKey.set(lockKey, ln)
+      nodes.push(ln)
+    }
+
+    const pid = String(l.pid ?? '')
+    const backendNode = backendByPID.get(pid)
+    const lockNode = lockNodeByKey.get(lockKey)
+    if (!backendNode || !lockNode) continue
+
+    edges.push({
+      source: backendNode.id,
+      target: lockNode.id,
+      wait_time_us: l.granted === 'false' ? 100000 : 0,
+      mode: l.mode ?? 'unknown',
+    })
+  }
+
+  return { nodes, edges }
+}
+
+function buildTransactionsFromSnapshot(
+  backends: Array<Record<string, string>>,
+  currentXid: number,
+): TransactionState[] {
+  return backends
+    .map((b) => {
+      const xid = Number(b.backend_xid ?? 0) || currentXid || 0
+      const stateText = (b.state ?? '').toLowerCase()
+      const mapped: TransactionState['state'] =
+        stateText.includes('idle') ? 'idle' :
+          stateText.includes('active') ? 'in_progress' :
+            'started'
+      return {
+        xid,
+        vxid: b.backend_xmin ?? '',
+        state: mapped,
+      }
+    })
+    .filter((t) => t.xid > 0)
+}

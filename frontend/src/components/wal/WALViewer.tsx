@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+﻿import { useEffect, useState, type CSSProperties } from 'react'
+import NodePageHeader from '../common/NodePageHeader'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 
@@ -8,7 +9,7 @@ export default function WALViewer() {
   const [lsn, setLsn] = useState('')
 
   useEffect(() => {
-    fetchWALRecords()
+    void fetchWALRecords()
   }, [])
 
   const fetchWALRecords = async () => {
@@ -25,35 +26,17 @@ export default function WALViewer() {
 
   return (
     <div style={{ padding: '1.5rem' }}>
-      <h2 style={{ fontSize: '1.25rem', marginBottom: '1rem' }}>WAL 记录查看器</h2>
+      <NodePageHeader title="WAL 记录查看" source="/api/wal" updatedAtText={new Date().toLocaleTimeString('zh-CN', { hour12: false })} />
 
       <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem', alignItems: 'center' }}>
         <input
           type="text"
-          placeholder="起始 LSN (如 0/16D4F30)"
+          placeholder="起始 LSN（例如 0/16D4F30）"
           value={lsn}
           onChange={(e) => setLsn(e.target.value)}
-          style={{
-            padding: '0.5rem',
-            background: 'var(--bg)',
-            color: 'var(--text)',
-            border: '1px solid var(--border)',
-            borderRadius: '4px',
-            fontFamily: 'monospace',
-            fontSize: '0.875rem',
-          }}
+          style={{ padding: '0.5rem', background: 'var(--bg)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: '4px', fontFamily: 'monospace', fontSize: '0.875rem', minWidth: '260px' }}
         />
-        <button
-          onClick={fetchWALRecords}
-          style={{
-            padding: '0.5rem 1rem',
-            background: 'var(--accent)',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer',
-          }}
-        >
+        <button onClick={() => void fetchWALRecords()} style={{ padding: '0.5rem 1rem', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
           刷新
         </button>
       </div>
@@ -62,61 +45,47 @@ export default function WALViewer() {
         <div style={{ color: 'var(--text-muted)' }}>加载中...</div>
       ) : records.length > 0 ? (
         <div style={{ overflowX: 'auto' }}>
-          <table style={{
-            width: '100%',
-            borderCollapse: 'collapse',
-            fontSize: '0.875rem',
-            fontFamily: 'monospace',
-          }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem', fontFamily: 'monospace' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                <th style={{ padding: '0.5rem', textAlign: 'left', color: 'var(--text-muted)' }}>LSN</th>
-                <th style={{ padding: '0.5rem', textAlign: 'left', color: 'var(--text-muted)' }}>RMGR</th>
-                <th style={{ padding: '0.5rem', textAlign: 'left', color: 'var(--text-muted)' }}>Operation</th>
-                <th style={{ padding: '0.5rem', textAlign: 'left', color: 'var(--text-muted)' }}>Info</th>
-                <th style={{ padding: '0.5rem', textAlign: 'left', color: 'var(--text-muted)' }}>XID</th>
-                <th style={{ padding: '0.5rem', textAlign: 'left', color: 'var(--text-muted)' }}>Length</th>
-                <th style={{ padding: '0.5rem', textAlign: 'left', color: 'var(--text-muted)' }}>Blocks</th>
+                <th style={th}>LSN</th>
+                <th style={th}>RMGR</th>
+                <th style={th}>Operation</th>
+                <th style={th}>Info</th>
+                <th style={th}>XID</th>
+                <th style={th}>Length</th>
+                <th style={th}>Blocks</th>
               </tr>
             </thead>
             <tbody>
               {records.map((rec, i) => (
                 <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ padding: '0.5rem', color: 'var(--accent)' }}>{String(rec.lsn ?? '')}</td>
-                  <td style={{ padding: '0.5rem' }}>{String(rec.rmgrName ?? '')}</td>
-                  <td style={{ padding: '0.5rem' }}>{String(rec.operation ?? '')}</td>
-                  <td style={{ padding: '0.5rem' }}>{String(rec.info ?? '')}</td>
-                  <td style={{ padding: '0.5rem' }}>{String(rec.xid ?? '')}</td>
-                  <td style={{ padding: '0.5rem' }}>{String(rec.recordLen ?? '')} / {String(rec.payloadLen ?? 0)}</td>
-                  <td style={{ padding: '0.5rem' }}>{formatBlocks(rec.blocks)}</td>
+                  <td style={{ ...td, color: 'var(--accent)' }}>{String(rec.lsn ?? '')}</td>
+                  <td style={td}>{String(rec.rmgrName ?? '')}</td>
+                  <td style={td}>{String(rec.operation ?? '')}</td>
+                  <td style={td}>{String(rec.info ?? '')}</td>
+                  <td style={td}>{String(rec.xid ?? '')}</td>
+                  <td style={td}>{String(rec.recordLen ?? '')} / {String(rec.payloadLen ?? 0)}</td>
+                  <td style={td}>{formatBlocks(rec.blocks)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       ) : (
-        <div style={{
-          padding: '2rem',
-          textAlign: 'center',
-          color: 'var(--text-muted)',
-          background: 'var(--bg-secondary)',
-          borderRadius: '8px',
-        }}>
-          <p>当前未连接到 PostgreSQL，或无 WAL 数据</p>
-          <p style={{ fontSize: '0.75rem', marginTop: '0.5rem' }}>
-            请在首页连接数据库后执行写操作（如 INSERT）生成 WAL 记录
-          </p>
+        <div style={{ padding: '1rem', border: '1px solid var(--border)', borderRadius: '8px', background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}>
+          暂无 WAL 数据。请先连接节点并执行写入 SQL（如 INSERT/UPDATE/DELETE）。
         </div>
       )}
     </div>
   )
 }
 
-function formatBlocks(value: unknown) {
-  if (!Array.isArray(value) || value.length === 0) {
-    return '-'
-  }
+const th: CSSProperties = { padding: '0.5rem', textAlign: 'left', color: 'var(--text-muted)' }
+const td: CSSProperties = { padding: '0.5rem' }
 
+function formatBlocks(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) return '-'
   return value
     .slice(0, 2)
     .map((block) => {
