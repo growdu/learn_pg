@@ -686,6 +686,34 @@ type clogTransactionResponse struct {
 	Status string `json:"status"`
 }
 
+// ServeCLOGStatus handles GET /api/clog/status — return CLOG overview (segment list + stats).
+func (h *Handler) ServeCLOGStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, r, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	dataDir := h.pgDataDir()
+	clogDir := filepath.Join(dataDir, "pg_xact")
+	entries, err := os.ReadDir(clogDir)
+	if err != nil {
+		h.writeError(w, r, http.StatusInternalServerError, "failed to read pg_xact: "+err.Error())
+		return
+	}
+	var segments []string
+	for _, e := range entries {
+		if !e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			segments = append(segments, e.Name())
+		}
+	}
+	sort.Strings(segments)
+	writeJSON(w, r, http.StatusOK, map[string]any{
+		"segments": segments,
+		"count":    len(segments),
+		"dataDir":  dataDir,
+		"clogDir":  clogDir,
+	})
+}
+
 func (h *Handler) ServeCLOG(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.writeError(w, r, http.StatusMethodNotAllowed, "GET required")
@@ -697,12 +725,20 @@ func (h *Handler) ServeCLOG(w http.ResponseWriter, r *http.Request) {
 	reader := clog.NewCLOGReader(dataDir)
 	transactions, err := reader.ReadRange(startXid, endXid)
 	if err != nil {
-		writeJSON(w, r, http.StatusOK, clogResponse{
+		writeJSON(w, r, http.StatusInternalServerError, clogResponse{
 			Transactions: []clogTransactionResponse{},
 			StartXid:     startXid,
 			EndXid:       endXid,
 			DataDir:      dataDir,
 			Note:         err.Error(),
+		})
+		return
+	}
+
+	if startXid == 0 && endXid == 0 {
+		writeJSON(w, r, http.StatusBadRequest, map[string]any{
+			"success": false,
+			"error":   "missing query parameters: startXid and endXid are required",
 		})
 		return
 	}
@@ -741,12 +777,22 @@ func (h *Handler) ServeCLOGFile(w http.ResponseWriter, r *http.Request) {
 	}
 	filename := parts[0]
 
+	// Validate filename is exactly 4 hex digits (CLOG segment name)
+	if !isHexSegmentName(filename) {
+		h.writeError(w, r, http.StatusBadRequest, "invalid segment filename: must be 4 hex digits (e.g., 0000, 00FF)")
+		return
+	}
+
 	dataDir := h.pgDataDir()
 	clogDir := filepath.Join(dataDir, "pg_xact")
 	filePath := filepath.Join(clogDir, filename)
 
 	entries, err := readCLOGFile(filePath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			h.writeError(w, r, http.StatusNotFound, "segment file not found: "+filename)
+			return
+		}
 		h.writeError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -896,6 +942,7 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	mux.HandleFunc("/api/cluster/node/inspect", h.ServeClusterNodeInspect)
 	mux.HandleFunc("/api/wal", h.ServeWAL)
 	mux.HandleFunc("/api/wal/segments", h.ServeWALSegments)
+	mux.HandleFunc("/api/clog/status", h.ServeCLOGStatus)
 	mux.HandleFunc("/api/clog", h.ServeCLOG)
 	mux.HandleFunc("/api/clog/", h.ServeCLOGFile)
 	mux.HandleFunc("/api/snapshot", h.ServeSnapshot)
@@ -1033,4 +1080,17 @@ func extractSegNum(filename string) uint64 {
 		}
 	}
 	return 0
+}
+
+// isHexSegmentName returns true if filename is exactly 4 uppercase hex digits.
+func isHexSegmentName(filename string) bool {
+	if len(filename) != 4 {
+		return false
+	}
+	for _, c := range filename {
+		if !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
