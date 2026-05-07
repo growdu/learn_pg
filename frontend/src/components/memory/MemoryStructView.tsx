@@ -60,7 +60,7 @@ function buildProcFromSnapshot(backends: SnapshotBackend[]): PGProcEntry[] {
       pid: Number(b.pid ?? 0),
       xid: Number(b.backend_xid ?? 0),
       vxid: '',
-      state: Number(b.backend_xid ?? 0) > 0 ? 'in_progress' : 'idle',
+      state: (Number(b.backend_xid ?? 0) > 0 ? 'in_progress' : 'idle') as PGProcEntry['state'],
       database: Number(b.datid ?? 0),
       lastEventTs: 0,
       waitEvent: b.wait_event ?? '',

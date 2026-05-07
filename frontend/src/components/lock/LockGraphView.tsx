@@ -175,7 +175,7 @@ export default function LockGraphView({ nodes, edges }: LockGraphViewProps) {
       nodeElements.attr('transform', (d) => `translate(${d.x ?? 0},${d.y ?? 0})`)
     })
 
-    return () => simulation.stop()
+    return () => { simulation.stop() }
   }, [displayNodes, displayEdges])
 
   return (

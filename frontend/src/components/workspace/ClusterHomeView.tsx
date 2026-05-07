@@ -254,7 +254,7 @@ export default function ClusterHomeView(props: Props) {
                     {selectedEdgeDetail && (
                       <div style={{ marginTop: '0.45rem', borderTop: '1px dashed var(--border)', paddingTop: '0.45rem', fontSize: '0.78rem' }}>
                         <div style={{ fontWeight: 700 }}>
-                          链路详情: {selectedEdgeDetail.from} -> {selectedEdgeDetail.to}
+                          链路详情: {selectedEdgeDetail.from} -&gt; {selectedEdgeDetail.to}
                           <span style={{ marginLeft: '0.5rem', color: selectedEdgeDetail.isAlert ? 'var(--red)' : 'var(--green)' }}>
                             {selectedEdgeDetail.isAlert ? '告警' : '正常'}
                           </span>

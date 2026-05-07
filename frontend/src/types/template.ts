@@ -30,7 +30,7 @@ function resolveComponentName(
   type: WorkspaceComponent['componentType'],
   fallback: string,
 ): string {
-  const p = pattern.replaceAll('{project}', projectName).replaceAll('{type}', type).trim()
+  const p = pattern.replace(/{project}/g, projectName).replace(/{type}/g, type).trim()
   return p.length > 0 ? p : fallback
 }
 
