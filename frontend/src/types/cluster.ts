@@ -10,6 +10,7 @@ export interface ClusterNodeConfig {
   database: string
   cluster_type: ClusterType
   role: string
+  source?: 'provisioned' | 'discovered' | 'dsn' | 'manual'
 }
 
 export interface ReplicationChannel {

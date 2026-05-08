@@ -4,6 +4,7 @@
 1. 整体优先：先看集群全局，再看节点细节。
 2. 可观测优先：所有关键对象应有状态展示。
 3. 渐进实现：先 Web MVP，后跨平台与深度内核采集。
+4. 生长式界面：页面按数据出现动态增长，不展示无内容模块。
 
 ## 2. 信息架构
 
@@ -12,6 +13,8 @@
 - Cluster（集群）
 - Node（节点）
 - Component（组件）
+- ProvisionTask（自动拉起任务）
+- DiscoveryInstance（探测到的数据库实例）
 
 ### 2.2 层级关系
 - Project 1..N Cluster
@@ -22,13 +25,13 @@
 ## 3. 页面结构
 
 ### 3.1 项目主页（Project Home）
-职责：展示项目级总览与对象关系。
-- 项目列表（选择/删除）
-- 项目拓扑总览（集群+节点、组件+关联）
-- 模板化创建入口
+职责：项目级入口与资源创建。
+- 无项目：仅展示创建入口。
+- 有项目后：展示项目列表、概览统计。
+- 支持“添加资源”入口：快速拉起/接入已有数据库。
 
 ### 3.2 集群主页（Cluster Home）
-职责：展示集群级状态与复制同步。
+职责：集群级状态与复制同步。
 - 集群列表（选择/删除）
 - 概览指标（总数、在线、异常）
 - 复制拓扑图（物理/逻辑）
@@ -36,58 +39,94 @@
 - 节点管理（增删改、激活）
 
 ### 3.3 组件主页（Component Home）
-职责：展示组件与集群关系并提供联动下钻。
+职责：组件与集群关系并联动下钻。
 - 组件 -> 集群 -> 节点树
 - 组件跨集群关系图
 - 组件-集群关联矩阵
-- 组件详情卡片
 
 ### 3.4 节点主页（Node Home）
-职责：承载单节点观测模块入口。
-- SQL / WAL / CLOG / 锁 / 事务 / 内存等视图导航
+职责：单节点观测入口。
+- SQL / WAL / CLOG / 锁 / 事务 / 内存等
 
-## 4. 数据与接口设计
+## 4. 自动拉起与接入设计
 
-### 4.1 前端核心类型
-- `WorkspaceProject`
-- `WorkspaceCluster`
-- `WorkspaceComponent`
-- `ClusterNodeConfig`
+### 4.1 快速拉起能力
+1. 单机模板（1 节点）
+- 自动拉起 PostgreSQL。
+- 自动创建节点配置。
+- 自动执行连接并进入观测。
 
-### 4.2 模板参数
-- `nodeCount`
-- `alertThresholdSec`
-- `createCollector/createAnalyzer/createStorage`
-- `componentNamePattern`
+2. 物理流复制模板
+- 自动拉起 primary + standby。
+- 自动初始化复制参数（如 `wal_level`、`max_wal_senders`、`hot_standby`）。
+- 自动生成集群拓扑并进入看板。
 
-### 4.3 后端接口（已对接）
-- `POST /api/connect`：激活某节点连接
-- `POST /api/cluster/overview`：返回集群同步状态总览
-- `POST /api/cluster/node/inspect`：单节点状态探测（可继续增强）
+3. 逻辑复制模板
+- 自动拉起 publisher + subscriber。
+- 自动创建 publication/subscription。
+- 自动校验订阅状态并进入看板。
 
-## 5. 交互设计
+### 4.2 接入已有数据库能力
+1. 机器探测接入（IP + 登录凭据）
+- 通过 SSH 扫描 PostgreSQL 实例。
+- 识别端口、版本、数据目录、服务名。
+- 选择实例导入并自动连接。
 
-### 5.1 下钻路径
-- 项目主页 -> 集群主页 -> 节点主页
-- 组件主页 -> 关系图点击集群 -> 节点主页
+2. 连接串接入（DSN）
+- 校验连通性与基础权限。
+- 导入为节点并自动连接。
 
-### 5.2 可视化交互
-- 复制拓扑图支持点击边（链路详情）
-- 复制拓扑图支持点击节点（高亮）
-- 组件关系图支持组件聚焦与集群跳转
+## 5. 后端接口设计
 
-## 6. 同步状态策略
-- 轮询模式：每 5 秒请求 `/api/cluster/overview`
-- 本地聚合：按选中集群过滤节点状态
-- 容错：请求失败显示错误并保留上次数据
+### 5.1 Provisioning API
+- `POST /api/provision/single`
+- `POST /api/provision/physical`
+- `POST /api/provision/logical`
+- `GET /api/provision/tasks/:taskId`
 
-## 7. 边界与约束
-- 当前为 Web MVP，不承诺 Tauri 主流程已可用。
-- 部分节点内视图仍含 demo 数据，需在后续版本替换为真实数据源。
-- 当前项目/集群配置主要在前端状态与本地存储，后续建议后端持久化。
+### 5.2 Discovery API
+- `POST /api/discovery/host/scan`
+- `POST /api/discovery/host/import`
+- `POST /api/discovery/dsn/validate`
+- `POST /api/discovery/dsn/import`
 
-## 8. 后续演进
-1. 拓扑边指标细化（LSN/lag/sync_state）
-2. 项目级后端持久化
-3. 多用户与权限
-4. Tauri 桌面化封装与统一分发
+### 5.3 复用接口
+- `POST /api/connect`
+- `POST /api/cluster/overview`
+- `GET /api/snapshot`
+
+## 6. 数据结构变更
+
+### 6.1 WorkspaceCluster
+- `provisionMode?: "manual" | "single" | "physical" | "logical" | "discovered" | "dsn"`
+- `provisionTaskId?: string`
+- `runtime?: { type: "docker" | "local"; pgVersion?: string }`
+
+### 6.2 ClusterNodeConfig
+- `source?: "provisioned" | "discovered" | "dsn" | "manual"`
+- `instanceMeta?: { service?: string; dataDir?: string; version?: string }`
+- `sshHint?: { host?: string; port?: number; user?: string }`
+
+### 6.3 ProvisionTask
+- `id, type, status, progress, message, createdAt, updatedAt, result`
+
+### 6.4 DiscoveryInstance
+- `host, port, version, dataDir, service, confidence`
+
+## 7. 交互流程（摘要）
+1. 创建项目
+2. 添加资源
+3. 选择：快速拉起（单机/物理/逻辑）或接入已有（机器探测/DSN）
+4. 自动创建集群/节点并连接
+5. 进入集群主页与节点观测
+
+## 8. 边界与约束
+- 当前阶段默认以单机开发环境（Docker 或本机）为优先。
+- SSH 探测需具备目标主机连接权限。
+- 物理/逻辑复制模板优先实现同机多实例，跨机部署后续扩展。
+
+## 9. 后续演进
+1. 拉起器抽象多 provider（docker/local/k8s）
+2. 自动回收与生命周期管理
+3. 多租户与凭据安全托管
+4. Tauri 桌面化统一部署

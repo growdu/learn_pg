@@ -1,7 +1,7 @@
 ﻿import type { ClusterNodeConfig } from './cluster'
 import type { WorkspaceProject, WorkspaceComponent, WorkspaceCluster } from './workspace'
 
-export type ReplicationTemplate = 'physical' | 'logical'
+export type ReplicationTemplate = 'single' | 'physical' | 'logical'
 export type ClusterNodeRole = 'primary' | 'standby' | 'publisher' | 'subscriber'
 
 export interface TemplateParams {
@@ -42,7 +42,7 @@ function buildComponents(
 ): WorkspaceComponent[] {
   const out: WorkspaceComponent[] = []
   if (params.createCollector) {
-    const fallback = template === 'physical' ? '物理复制采集组件' : '逻辑复制采集组件'
+    const fallback = template === 'logical' ? '逻辑复制采集组件' : '物理复制采集组件'
     out.push({
       id: genId(),
       name: resolveComponentName(params.componentNamePattern, projectName, 'collector', fallback),
@@ -51,7 +51,7 @@ function buildComponents(
     })
   }
   if (params.createAnalyzer) {
-    const fallback = template === 'physical' ? '复制分析组件' : 'CDC 分析组件'
+    const fallback = template === 'logical' ? 'CDC 分析组件' : '复制分析组件'
     out.push({
       id: genId(),
       name: resolveComponentName(params.componentNamePattern, projectName, 'analyzer', fallback),
@@ -60,7 +60,7 @@ function buildComponents(
     })
   }
   if (params.createStorage) {
-    const fallback = template === 'physical' ? '归档存储组件' : '变更存储组件'
+    const fallback = template === 'logical' ? '变更存储组件' : '归档存储组件'
     out.push({
       id: genId(),
       name: resolveComponentName(params.componentNamePattern, projectName, 'storage', fallback),
@@ -104,6 +104,37 @@ export const PHYSICAL_TEMPLATE: WorkspaceTemplate = {
   },
 }
 
+export const SINGLE_TEMPLATE: WorkspaceTemplate = {
+  id: 'single',
+  name: '单机模板',
+  description: '单节点 PostgreSQL，适合快速启动与本地观测。',
+  preview: `single(primary)`,
+  defaultParams: {
+    nodeCount: 1,
+    alertThresholdSec: 30,
+    createCollector: true,
+    createAnalyzer: false,
+    createStorage: false,
+    componentNamePattern: '{project}-{type}',
+  },
+  buildProject: (name, params, makeNode) => {
+    const nodes: ClusterNodeConfig[] = [makeNode(1, 'primary')]
+    const cluster: WorkspaceCluster = {
+      id: genId(),
+      name: '单机集群',
+      replicationType: 'physical',
+      alertThresholdSec: params.alertThresholdSec,
+      nodes,
+    }
+    return {
+      id: genId(),
+      name,
+      clusters: [cluster],
+      components: buildComponents('single', name, cluster.id, params),
+    }
+  },
+}
+
 export const LOGICAL_TEMPLATE: WorkspaceTemplate = {
   id: 'logical',
   name: '逻辑复制模板',
@@ -137,4 +168,4 @@ export const LOGICAL_TEMPLATE: WorkspaceTemplate = {
   },
 }
 
-export const ALL_TEMPLATES: WorkspaceTemplate[] = [PHYSICAL_TEMPLATE, LOGICAL_TEMPLATE]
+export const ALL_TEMPLATES: WorkspaceTemplate[] = [SINGLE_TEMPLATE, PHYSICAL_TEMPLATE, LOGICAL_TEMPLATE]

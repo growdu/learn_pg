@@ -43,6 +43,7 @@ export type View =
   | 'plan'
 
 const STORAGE_KEY = 'pgv_workspace_projects'
+const TASK_STORAGE_KEY = 'pgv_provision_task'
 const WORKSPACE_SCHEMA_VERSION = 1
 const genId = () => crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)
 
@@ -59,6 +60,25 @@ function loadProjects(): WorkspaceProject[] {
 
 function saveProjects(projects: WorkspaceProject[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(projects))
+}
+
+function loadProvisionTaskCache(): { taskId: string; status: string; progress: number; message: string; startedAt?: number; finishedAt?: number } | null {
+  try {
+    const raw = localStorage.getItem(TASK_STORAGE_KEY)
+    if (!raw) return null
+    const t = JSON.parse(raw) as { taskId?: string; status?: string; progress?: number; message?: string; startedAt?: number; finishedAt?: number }
+    if (!t.taskId || !t.status) return null
+    return {
+      taskId: t.taskId,
+      status: t.status,
+      progress: t.progress ?? 0,
+      message: t.message ?? '',
+      startedAt: t.startedAt,
+      finishedAt: t.finishedAt,
+    }
+  } catch {
+    return null
+  }
 }
 
 async function loadProjectsFromBackend(): Promise<WorkspaceProject[] | null> {
@@ -90,6 +110,83 @@ async function saveProjectsToBackend(projects: WorkspaceProject[]): Promise<bool
   }
 }
 
+async function provisionClusterByTemplate(
+  templateId: ReplicationTemplate,
+  projectId: string,
+  clusterName: string,
+): Promise<{ ok: boolean; taskId?: string; error?: string }> {
+  const endpoint =
+    templateId === 'single'
+      ? '/api/provision/single'
+      : templateId === 'physical'
+        ? '/api/provision/physical'
+        : '/api/provision/logical'
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId,
+        clusterName,
+        runtime: { type: 'local' },
+      }),
+    })
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` }
+    const data = (await res.json()) as { success?: boolean; taskId?: string }
+    return { ok: !!data.success, taskId: data.taskId, error: data.success ? undefined : 'provision failed' }
+  } catch {
+    return { ok: false, error: 'network error' }
+  }
+}
+
+async function getProvisionTask(taskId: string): Promise<{ status: string; progress: number; message?: string; startedAt?: number; finishedAt?: number } | null> {
+  try {
+    const res = await fetch(`/api/provision/tasks/${taskId}`)
+    if (!res.ok) return null
+    const data = (await res.json()) as {
+      success?: boolean
+      task?: { status?: string; progress?: number; message?: string; startedAt?: number; finishedAt?: number }
+    }
+    if (!data.success || !data.task) return null
+    return {
+      status: data.task.status || 'unknown',
+      progress: data.task.progress ?? 0,
+      message: data.task.message,
+      startedAt: data.task.startedAt,
+      finishedAt: data.task.finishedAt,
+    }
+  } catch {
+    return null
+  }
+}
+
+async function listProvisionTasks(
+  limit = 10,
+  status: 'all' | 'running' | 'success' | 'failed' = 'all',
+): Promise<Array<{ taskId: string; status: string; progress: number; message?: string; startedAt?: number; finishedAt?: number; projectId?: string; clusterId?: string }>> {
+  try {
+    const res = await fetch(`/api/provision/tasks?limit=${limit}&status=${status}`)
+    if (!res.ok) return []
+    const data = (await res.json()) as {
+      success?: boolean
+      tasks?: Array<{ taskId?: string; status?: string; progress?: number; message?: string; startedAt?: number; finishedAt?: number; projectId?: string; clusterId?: string }>
+    }
+    if (!data.success || !Array.isArray(data.tasks)) return []
+    return data.tasks.map((t) => ({
+      taskId: t.taskId || '-',
+      status: t.status || 'unknown',
+      progress: t.progress ?? 0,
+      message: t.message,
+      startedAt: t.startedAt,
+      finishedAt: t.finishedAt,
+      projectId: t.projectId,
+      clusterId: t.clusterId,
+    }))
+  } catch {
+    return []
+  }
+}
+
 function migrateWorkspaceProjects(projects: WorkspaceProject[], _schemaVersion: number): WorkspaceProject[] {
   return projects.map((p) => ({
     ...p,
@@ -117,6 +214,7 @@ function makeDefaultNode(idx: number, role: ClusterNodeConfig['role'] = idx === 
     database: cfg.database,
     cluster_type: role === 'publisher' || role === 'subscriber' ? 'logical' : 'physical',
     role,
+    source: 'manual',
   }
 }
 
@@ -134,6 +232,10 @@ function App() {
   const [snapshotLocks, setSnapshotLocks] = useState<{ nodes: LockNode[]; edges: LockEdge[] }>({ nodes: [], edges: [] })
   const [snapshotTransactions, setSnapshotTransactions] = useState<TransactionState[]>([])
   const [snapshotBackends, setSnapshotBackends] = useState<Array<Record<string, string>>>([])
+  const [provisionTask, setProvisionTask] = useState<{ taskId: string; status: string; progress: number; message: string; startedAt?: number; finishedAt?: number } | null>(() => loadProvisionTaskCache())
+  const [recentTasks, setRecentTasks] = useState<Array<{ taskId: string; status: string; progress: number; message?: string; startedAt?: number; finishedAt?: number; projectId?: string; clusterId?: string }>>([])
+  const [showRecentTasks, setShowRecentTasks] = useState(false)
+  const [recentTaskFilter, setRecentTaskFilter] = useState<'all' | 'running' | 'success' | 'failed'>('all')
 
   const storeConnected = usePGStore((s) => s.connected)
   const storeVersion = usePGStore((s) => s.version)
@@ -167,6 +269,17 @@ function App() {
       stop = true
     }
   }, [])
+
+  const reloadWorkspaceFromBackend = async () => {
+    const remote = await loadProjectsFromBackend()
+    if (!remote) return false
+    setProjects(remote)
+    const currentProjectId = selectedProjectId || remote[0]?.id || ''
+    setSelectedProjectId(currentProjectId)
+    const p = remote.find((x) => x.id === currentProjectId) ?? remote[0]
+    setSelectedClusterId(p?.clusters[0]?.id ?? '')
+    return true
+  }
 
   useEffect(() => {
     if (!workspaceBootstrapped) return
@@ -240,15 +353,158 @@ function App() {
 
   const handleTemplateConfirm = (templateId: ReplicationTemplate, name: string, params: TemplateParams) => {
     setShowTemplateDialog(false)
-    const tpl = ALL_TEMPLATES.find((t) => t.id === templateId)!
-    const project = tpl.buildProject(name, params, makeDefaultNode)
-    const next = [...projects, project]
-    setProjects(next)
-    setSelectedProjectId(project.id)
-    if (project.clusters[0]) setSelectedClusterId(project.clusters[0].id)
-    setHighlightedComponentIds(project.components.map((c) => c.id))
-    setCurrentView('component_home')
+    void (async () => {
+      const projectId = genId()
+      const baseProject: WorkspaceProject = { id: projectId, name: name.trim() || `项目 ${projects.length + 1}`, clusters: [], components: [] }
+      const optimistic = [...projects, baseProject]
+      setProjects(optimistic)
+      setSelectedProjectId(projectId)
+
+      const seedOk = await saveProjectsToBackend(optimistic)
+      const provision = seedOk ? await provisionClusterByTemplate(templateId, projectId, `${baseProject.name}-${templateId}`) : { ok: false as const }
+      const provisionOk = provision.ok
+      if (provision.taskId) {
+        setProvisionTask({ taskId: provision.taskId, status: 'running', progress: 5, message: '集群创建中...', startedAt: Date.now() })
+      } else if (!provisionOk) {
+        setProvisionTask({
+          taskId: `local-${Date.now()}`,
+          status: 'failed',
+          progress: 100,
+          message: `后端创建失败，已回退本地模板：${provision.error || 'unknown error'}`,
+          startedAt: Date.now(),
+          finishedAt: Date.now(),
+        })
+      }
+      if (provisionOk) {
+        const remote = await loadProjectsFromBackend()
+        if (remote) {
+          setProjects(remote)
+          const current = remote.find((p) => p.id === projectId)
+          setSelectedProjectId(projectId)
+          setSelectedClusterId(current?.clusters[0]?.id ?? '')
+          setHighlightedComponentIds([])
+          setCurrentView('cluster_home')
+          return
+        }
+      }
+
+      // Fallback: keep local template creation when backend provision is unavailable.
+      const tpl = ALL_TEMPLATES.find((t) => t.id === templateId)!
+      const fallbackProject = tpl.buildProject(baseProject.name, params, makeDefaultNode)
+      fallbackProject.id = projectId
+      const fallbackProjects = projects.filter((p) => p.id !== projectId).concat(fallbackProject)
+      setProjects(fallbackProjects)
+      setSelectedProjectId(projectId)
+      setSelectedClusterId(fallbackProject.clusters[0]?.id ?? '')
+      setHighlightedComponentIds(fallbackProject.components.map((c) => c.id))
+      setCurrentView('component_home')
+    })()
   }
+
+  useEffect(() => {
+    if (!provisionTask?.taskId) return
+    if (provisionTask.status === 'success' || provisionTask.status === 'failed') return
+    const timer = window.setInterval(() => {
+      void (async () => {
+        const task = await getProvisionTask(provisionTask.taskId)
+        if (!task) return
+        setProvisionTask((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: task.status,
+                progress: task.progress,
+                message: task.message || prev.message,
+                startedAt: task.startedAt || prev.startedAt,
+                finishedAt: task.finishedAt,
+              }
+            : prev,
+        )
+      })()
+    }, 1200)
+    return () => window.clearInterval(timer)
+  }, [provisionTask])
+
+  const taskStatusLabel = (status: string) =>
+    status === 'running' ? '进行中' : status === 'success' ? '成功' : status === 'failed' ? '失败' : status
+
+  const taskDurationSec = (t: { startedAt?: number; finishedAt?: number }) =>
+    t.startedAt ? Math.max(0, Math.floor(((t.finishedAt ?? Date.now()) - t.startedAt) / 1000)) : 0
+
+  useEffect(() => {
+    if (!provisionTask) return
+    if (provisionTask.status !== 'success') return
+    void reloadWorkspaceFromBackend()
+    const t = window.setTimeout(() => setProvisionTask(null), 2200)
+    return () => window.clearTimeout(t)
+  }, [provisionTask])
+
+  const refreshProvisionTask = async () => {
+    if (!provisionTask?.taskId) return
+    const task = await getProvisionTask(provisionTask.taskId)
+    if (!task) return
+    setProvisionTask((prev) =>
+      prev
+        ? {
+            ...prev,
+            status: task.status,
+            progress: task.progress,
+            message: task.message || prev.message,
+            startedAt: task.startedAt || prev.startedAt,
+            finishedAt: task.finishedAt,
+          }
+        : prev,
+    )
+  }
+
+  const refreshRecentTasks = async () => {
+    const items = await listProvisionTasks(8, recentTaskFilter)
+    setRecentTasks(items)
+  }
+
+  useEffect(() => {
+    void (async () => {
+      const items = await listProvisionTasks(1)
+      const latest = items[0]
+      if (!latest) return
+      if (latest.status === 'running') {
+        setProvisionTask({
+          taskId: latest.taskId,
+          status: latest.status,
+          progress: latest.progress,
+          message: latest.message || '任务恢复中...',
+          startedAt: latest.startedAt,
+          finishedAt: latest.finishedAt,
+        })
+      }
+    })()
+  }, [])
+
+  useEffect(() => {
+    if (!showRecentTasks) return
+    void refreshRecentTasks()
+    const timer = window.setInterval(() => {
+      void refreshRecentTasks()
+    }, 3000)
+    return () => window.clearInterval(timer)
+  }, [showRecentTasks])
+
+  useEffect(() => {
+    if (!showRecentTasks) return
+    void refreshRecentTasks()
+  }, [recentTaskFilter])
+
+  useEffect(() => {
+    if (!provisionTask) {
+      localStorage.removeItem(TASK_STORAGE_KEY)
+      return
+    }
+    localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(provisionTask))
+    if (provisionTask.status === 'failed') {
+      setShowRecentTasks(true)
+      setRecentTaskFilter('failed')
+    }
+  }, [provisionTask])
 
   const removeProject = (id: string) => {
     const next = projects.filter((p) => p.id !== id)
@@ -391,6 +647,7 @@ function App() {
             onAddNode={addNode}
             onRemoveNode={removeNode}
             onNavigate={setCurrentView}
+            onReloadWorkspace={reloadWorkspaceFromBackend}
           />
         )
       case 'component_home':
@@ -454,6 +711,94 @@ function App() {
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <Sidebar currentView={currentView} onNavigate={setCurrentView} projectActive={projectActive} nodeActive={nodeActive} nodeLabel={nodeLabel} />
         <main style={{ flex: 1, overflow: 'auto', padding: '0' }}>
+          {provisionTask && (
+            <div
+              style={{
+                padding: '0.45rem 1rem',
+                borderBottom: '1px solid var(--border)',
+                background:
+                  provisionTask.status === 'failed'
+                    ? 'rgba(239,68,68,0.15)'
+                    : provisionTask.status === 'success'
+                      ? 'rgba(34,197,94,0.15)'
+                      : 'rgba(59,130,246,0.12)',
+              }}
+            >
+              <div style={{ fontSize: '0.78rem', color: 'var(--text)' }}>
+                任务 {provisionTask.taskId} · {taskStatusLabel(provisionTask.status)} · {provisionTask.progress}% · {provisionTask.message}
+              </div>
+              <div style={{ marginTop: '0.2rem', fontSize: '0.74rem', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>
+                  {provisionTask.startedAt
+                    ? `耗时 ${Math.max(0, Math.floor(((provisionTask.finishedAt ?? Date.now()) - provisionTask.startedAt) / 1000))}s`
+                    : ''}
+                </span>
+                <button
+                  onClick={() => void refreshProvisionTask()}
+                  style={{ border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.72rem', cursor: 'pointer', padding: '0.1rem 0.45rem', marginRight: '0.35rem' }}
+                >
+                  刷新
+                </button>
+                <button
+                  onClick={() => {
+                    setShowRecentTasks((v) => !v)
+                  }}
+                  style={{ border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.72rem', cursor: 'pointer', padding: '0.1rem 0.45rem', marginRight: '0.35rem' }}
+                >
+                  最近任务
+                </button>
+                <button
+                  onClick={() => setProvisionTask(null)}
+                  style={{ border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.72rem', cursor: 'pointer', padding: '0.1rem 0.45rem' }}
+                >
+                  关闭
+                </button>
+              </div>
+              <div style={{ marginTop: '0.25rem', height: '6px', background: 'rgba(148,163,184,0.35)', borderRadius: '999px' }}>
+                <div style={{ width: `${Math.max(0, Math.min(100, provisionTask.progress))}%`, height: '100%', background: 'var(--accent)', borderRadius: '999px' }} />
+              </div>
+              {showRecentTasks && (
+                <div style={{ marginTop: '0.45rem', borderTop: '1px dashed var(--border)', paddingTop: '0.35rem' }}>
+                  <div style={{ marginBottom: '0.35rem', display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>筛选</span>
+                    <select
+                      value={recentTaskFilter}
+                      onChange={(e) => setRecentTaskFilter(e.target.value as 'all' | 'running' | 'success' | 'failed')}
+                      style={{ border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.72rem', padding: '0.1rem 0.35rem' }}
+                    >
+                      <option value="all">全部</option>
+                      <option value="running">进行中</option>
+                      <option value="success">成功</option>
+                      <option value="failed">失败</option>
+                    </select>
+                  </div>
+                  {recentTasks.length === 0 && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>暂无历史任务</div>}
+                  {recentTasks.map((t) => (
+                    <div
+                      key={t.taskId}
+                      style={{
+                        fontSize: '0.72rem',
+                        color: t.status === 'failed' ? '#ef4444' : 'var(--text-muted)',
+                        marginBottom: '0.28rem',
+                        padding: '0.2rem 0.3rem',
+                        border: '1px solid var(--border)',
+                        borderRadius: '6px',
+                        background: t.status === 'failed' ? 'rgba(239,68,68,0.08)' : 'transparent',
+                      }}
+                    >
+                      <div>{t.taskId} · {taskStatusLabel(t.status)} · {t.progress}%</div>
+                      <div style={{ marginTop: '0.12rem' }}>{t.message || '-'}</div>
+                      <div style={{ marginTop: '0.12rem' }}>
+                        耗时: {taskDurationSec(t)}s
+                        {t.projectId ? ` · 项目: ${t.projectId}` : ''}
+                        {t.clusterId ? ` · 集群: ${t.clusterId}` : ''}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {workspaceSyncError && (
             <div style={{ padding: '0.5rem 1rem', borderBottom: '1px solid var(--border)', background: 'rgba(245,158,11,0.12)', color: '#f59e0b', fontSize: '0.8rem' }}>
               {workspaceSyncError}

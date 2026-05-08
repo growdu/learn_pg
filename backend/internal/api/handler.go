@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"pg-visualizer-backend/internal/config"
@@ -27,19 +28,30 @@ type Handler struct {
 	pgClient  *pg.Client
 	hub       *ws.Hub
 	workspace *workspaceStore
+	taskMu    sync.Mutex
+	tasks     map[string]provisionTask
+	taskPath  string
 }
 
 // NewHandler creates a new API handler
 func NewHandler(cfg *config.Config, hub *ws.Hub) *Handler {
-	return &Handler{
+	h := &Handler{
 		config:    cfg,
 		hub:       hub,
 		workspace: newWorkspaceStore(defaultWorkspaceFilePath()),
+		tasks:     make(map[string]provisionTask),
+		taskPath:  defaultProvisionTaskFilePath(),
 	}
+	h.loadProvisionTasks()
+	return h
 }
 
 func defaultWorkspaceFilePath() string {
 	return filepath.Join("data", "workspace_projects.json")
+}
+
+func defaultProvisionTaskFilePath() string {
+	return filepath.Join("data", "provision_tasks.json")
 }
 
 // SetPGClient sets the PostgreSQL client
@@ -1058,6 +1070,15 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	mux.HandleFunc("/api/clog", h.ServeCLOG)
 	mux.HandleFunc("/api/clog/", h.ServeCLOGFile)
 	mux.HandleFunc("/api/snapshot", h.ServeSnapshot)
+	mux.HandleFunc("/api/provision/single", h.ServeProvisionSingle)
+	mux.HandleFunc("/api/provision/physical", h.ServeProvisionPhysical)
+	mux.HandleFunc("/api/provision/logical", h.ServeProvisionLogical)
+	mux.HandleFunc("/api/provision/tasks/", h.ServeProvisionTask)
+	mux.HandleFunc("/api/provision/tasks", h.ServeProvisionTasks)
+	mux.HandleFunc("/api/discovery/host/scan", h.ServeDiscoveryHostScan)
+	mux.HandleFunc("/api/discovery/host/import", h.ServeDiscoveryHostImport)
+	mux.HandleFunc("/api/discovery/dsn/validate", h.ServeDiscoveryDSNValidate)
+	mux.HandleFunc("/api/discovery/dsn/import", h.ServeDiscoveryDSNImport)
 	mux.HandleFunc("/ws", h.ServeWS)
 }
 

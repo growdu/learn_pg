@@ -14,6 +14,7 @@ interface Props {
   onAddNode: (clusterId: string) => void
   onRemoveNode: (clusterId: string, nodeId: string) => void
   onNavigate: (view: View) => void
+  onReloadWorkspace: () => Promise<boolean>
 }
 
 interface OverviewState {
@@ -29,11 +30,42 @@ interface EdgeInfo {
   label: string
 }
 
+interface DiscoveredInstance {
+  host: string
+  port: number
+  version?: string
+  dataDir?: string
+  service?: string
+  confidence?: string
+}
+interface ImportLogEntry {
+  ts: number
+  level: 'info' | 'success' | 'error'
+  message: string
+}
+
 export default function ClusterHomeView(props: Props) {
   const { setConfig, setConnected, setVersion } = usePGStore()
   const [overview, setOverview] = useState<OverviewState>({ loading: false, error: '', nodes: [], timestamp: 0 })
   const [selectedEdgeKey, setSelectedEdgeKey] = useState('')
   const [selectedNodeId, setSelectedNodeId] = useState('')
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'provisioned' | 'discovered' | 'dsn' | 'manual'>('all')
+  const [scanHost, setScanHost] = useState('127.0.0.1')
+  const [scanLoading, setScanLoading] = useState(false)
+  const [scanError, setScanError] = useState('')
+  const [instances, setInstances] = useState<DiscoveredInstance[]>([])
+  const [dsn, setDsn] = useState('')
+  const [dsnLoading, setDsnLoading] = useState(false)
+  const [dsnMessage, setDsnMessage] = useState('')
+  const [importUser, setImportUser] = useState('postgres')
+  const [importPassword, setImportPassword] = useState('')
+  const [importDatabase, setImportDatabase] = useState('postgres')
+  const [autoConnectAfterImport, setAutoConnectAfterImport] = useState(false)
+  const [highlightNodeId, setHighlightNodeId] = useState('')
+  const [lastImportedNodeId, setLastImportedNodeId] = useState('')
+  const [copyMessage, setCopyMessage] = useState('')
+  const [pendingAutoActivateNodeId, setPendingAutoActivateNodeId] = useState('')
+  const [importLogs, setImportLogs] = useState<ImportLogEntry[]>([])
 
   const cluster = useMemo(
     () => props.project?.clusters.find((c) => c.id === props.selectedClusterId) ?? props.project?.clusters[0],
@@ -111,11 +143,141 @@ export default function ClusterHomeView(props: Props) {
     props.onNavigate(view)
   }
 
+  const runHostScan = async () => {
+    setScanLoading(true)
+    setScanError('')
+    try {
+      addLog('info', `开始探测主机 ${scanHost.trim() || '-'}`)
+      const res = await fetch('/api/discovery/host/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ host: scanHost.trim() }),
+      })
+      const data = (await res.json()) as { success?: boolean; error?: string; instances?: DiscoveredInstance[] }
+      if (!res.ok || !data.success) throw new Error(data.error || `HTTP ${res.status}`)
+      setInstances(data.instances ?? [])
+      addLog('success', `主机探测完成，发现 ${data.instances?.length ?? 0} 个候选实例`)
+    } catch (err) {
+      setScanError(err instanceof Error ? err.message : '主机探测失败')
+      setInstances([])
+      addLog('error', `主机探测失败：${err instanceof Error ? err.message : '未知错误'}`)
+    } finally {
+      setScanLoading(false)
+    }
+  }
+
+  const importDiscovered = async (instance: DiscoveredInstance) => {
+    if (!props.project || !cluster) return
+    try {
+      addLog('info', `开始导入主机实例 ${instance.host}:${instance.port}`)
+      const res = await fetch('/api/discovery/host/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: props.project.id,
+          clusterId: cluster.id,
+          instance,
+          autoConnect: autoConnectAfterImport,
+          user: importUser,
+          password: importPassword,
+          database: importDatabase,
+        }),
+      })
+      const data = (await res.json()) as { success?: boolean; error?: string; nodeId?: string }
+      if (!res.ok || !data.success) throw new Error(data.error || `HTTP ${res.status}`)
+      await props.onReloadWorkspace()
+      addLog('success', `主机实例导入成功 ${instance.host}:${instance.port}`)
+      if (data.nodeId) {
+        setHighlightNodeId(data.nodeId)
+        setLastImportedNodeId(data.nodeId)
+        if (autoConnectAfterImport) setPendingAutoActivateNodeId(data.nodeId)
+      }
+    } catch (err) {
+      setScanError(err instanceof Error ? err.message : '导入失败')
+      addLog('error', `主机实例导入失败：${err instanceof Error ? err.message : '未知错误'}`)
+    }
+  }
+
+  const validateAndImportDSN = async () => {
+    if (!props.project || !cluster || !dsn.trim()) return
+    setDsnLoading(true)
+    setDsnMessage('')
+    try {
+      addLog('info', '开始校验 DSN')
+      const valRes = await fetch('/api/discovery/dsn/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dsn: dsn.trim() }),
+      })
+      const valData = (await valRes.json()) as { success?: boolean; reachable?: boolean; version?: string; error?: string }
+      if (!valRes.ok || !valData.success || !valData.reachable) throw new Error(valData.error || 'DSN 校验失败')
+      addLog('success', `DSN 校验通过，版本 ${valData.version || '-'}`)
+
+      const impRes = await fetch('/api/discovery/dsn/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: props.project.id, clusterId: cluster.id, dsn: dsn.trim(), autoConnect: autoConnectAfterImport }),
+      })
+      const impData = (await impRes.json()) as { success?: boolean; error?: string; nodeId?: string }
+      if (!impRes.ok || !impData.success) throw new Error(impData.error || 'DSN 导入失败')
+      setDsnMessage(`DSN 导入成功，版本 ${valData.version || '-'}`)
+      await props.onReloadWorkspace()
+      addLog('success', 'DSN 导入成功')
+      if (impData.nodeId) {
+        setHighlightNodeId(impData.nodeId)
+        setLastImportedNodeId(impData.nodeId)
+        if (autoConnectAfterImport) setPendingAutoActivateNodeId(impData.nodeId)
+      }
+    } catch (err) {
+      setDsnMessage(err instanceof Error ? err.message : 'DSN 导入失败')
+      addLog('error', `DSN 导入失败：${err instanceof Error ? err.message : '未知错误'}`)
+    } finally {
+      setDsnLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!highlightNodeId) return
+    const timer = window.setTimeout(() => {
+      const el = document.querySelector(`[data-node-id="${highlightNodeId}"]`) as HTMLElement | null
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 120)
+    const clear = window.setTimeout(() => setHighlightNodeId(''), 3500)
+    return () => {
+      window.clearTimeout(timer)
+      window.clearTimeout(clear)
+    }
+  }, [highlightNodeId, props.project])
+
+  useEffect(() => {
+    if (!pendingAutoActivateNodeId || !cluster) return
+    const node = cluster.nodes.find((n) => n.id === pendingAutoActivateNodeId)
+    if (!node) return
+    void activateNode(node, 'node_home')
+    setPendingAutoActivateNodeId('')
+  }, [pendingAutoActivateNodeId, cluster])
+
   const clusterStatuses = useMemo(() => {
     if (!cluster) return []
     const ids = new Set(cluster.nodes.map((n) => n.id))
     return overview.nodes.filter((n) => ids.has(n.id))
   }, [cluster, overview.nodes])
+
+  const filteredClusterNodes = useMemo(() => {
+    if (!cluster) return []
+    if (sourceFilter === 'all') return cluster.nodes
+    return cluster.nodes.filter((n) => (n.source ?? 'manual') === sourceFilter)
+  }, [cluster, sourceFilter])
+
+  const filteredClusterStatuses = useMemo(() => {
+    const ids = new Set(filteredClusterNodes.map((n) => n.id))
+    return clusterStatuses.filter((s) => ids.has(s.id))
+  }, [filteredClusterNodes, clusterStatuses])
+
+  const lastImportedNode = useMemo(() => {
+    if (!cluster || !lastImportedNodeId) return null
+    return cluster.nodes.find((n) => n.id === lastImportedNodeId) ?? null
+  }, [cluster, lastImportedNodeId])
 
   const summary = useMemo(() => {
     const totalClusters = props.project?.clusters.length ?? 0
@@ -188,6 +350,20 @@ export default function ClusterHomeView(props: Props) {
     }
   }, [cluster, clusterStatuses, selectedEdgeKey, alertThresholdBytes])
 
+  const copyText = async (text: string, okMsg: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopyMessage(okMsg)
+    } catch {
+      setCopyMessage('复制失败，请手动复制。')
+    }
+    window.setTimeout(() => setCopyMessage(''), 1800)
+  }
+
+  const addLog = (level: ImportLogEntry['level'], message: string) => {
+    setImportLogs((prev) => [{ ts: Date.now(), level, message }, ...prev].slice(0, 20))
+  }
+
   return (
     <div style={{ padding: '1rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
@@ -233,11 +409,33 @@ export default function ClusterHomeView(props: Props) {
               {!cluster && <div style={{ color: 'var(--text-muted)' }}>请选择集群查看拓扑、同步状态和节点管理。</div>}
               {cluster && (
                 <>
+                  {lastImportedNode && (
+                    <div style={{ marginBottom: '0.65rem', border: '1px solid #60a5fa', borderRadius: '8px', padding: '0.55rem', background: 'rgba(96,165,250,0.08)' }}>
+                      <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: '0.35rem' }}>
+                        新节点已导入：{lastImportedNode.name}（{lastImportedNode.host}:{lastImportedNode.port}）
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                        <button onClick={() => void activateNode(lastImportedNode, 'node_home')} style={smallBtn}>进入节点主页</button>
+                        <button onClick={() => void activateNode(lastImportedNode, 'sql')} style={smallBtn}>进入 SQL 观测</button>
+                        <button onClick={() => void copyText(`${lastImportedNode.host}:${lastImportedNode.port}`, '已复制主机端口')} style={smallBtn}>复制主机端口</button>
+                        <button
+                          onClick={() => void copyText(`postgresql://${lastImportedNode.user}:${lastImportedNode.password}@${lastImportedNode.host}:${lastImportedNode.port}/${lastImportedNode.database}`, '已复制 DSN')}
+                          style={smallBtn}
+                        >
+                          复制 DSN
+                        </button>
+                        <button onClick={() => setLastImportedNodeId('')} style={smallBtnDanger}>关闭</button>
+                      </div>
+                      {copyMessage && <div style={{ marginTop: '0.35rem', fontSize: '0.76rem', color: 'var(--green)' }}>{copyMessage}</div>}
+                    </div>
+                  )}
+
                   <h3 style={{ marginTop: 0 }}>{cluster.name} · 拓扑</h3>
                   <div style={{ marginBottom: '0.7rem', border: '1px solid var(--border)', borderRadius: '8px', background: 'var(--bg)', padding: '0.5rem' }}>
                     <TopologyMap
                       cluster={cluster}
-                      statuses={clusterStatuses}
+                      statuses={filteredClusterStatuses}
+                      nodes={filteredClusterNodes}
                       edges={topologyEdges}
                       selectedEdgeKey={selectedEdgeKey}
                       selectedNodeId={selectedNodeId}
@@ -298,8 +496,32 @@ export default function ClusterHomeView(props: Props) {
                   </div>
 
                   <div style={{ marginBottom: '0.6rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>节点管理</div>
-                  {cluster.nodes.map((n) => (
-                    <div key={n.id} data-node-id={n.id} style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '0.55rem', marginBottom: '0.5rem', background: 'var(--bg)' }}>
+                  <div style={{ marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>来源筛选</span>
+                    <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value as typeof sourceFilter)} style={input}>
+                      <option value="all">全部</option>
+                      <option value="provisioned">自动拉起</option>
+                      <option value="discovered">主机探测</option>
+                      <option value="dsn">DSN 导入</option>
+                      <option value="manual">手动配置</option>
+                    </select>
+                  </div>
+                  {filteredClusterNodes.map((n) => (
+                    <div
+                      key={n.id}
+                      data-node-id={n.id}
+                      style={{
+                        border: highlightNodeId === n.id ? '1px solid #60a5fa' : '1px solid var(--border)',
+                        boxShadow: highlightNodeId === n.id ? '0 0 0 2px rgba(96,165,250,0.25)' : 'none',
+                        borderRadius: '8px',
+                        padding: '0.55rem',
+                        marginBottom: '0.5rem',
+                        background: 'var(--bg)',
+                      }}
+                    >
+                      <div style={{ marginBottom: '0.35rem' }}>
+                        <span style={sourceBadge(n.source)}>{sourceLabel(n.source)}</span>
+                      </div>
                       <input value={n.name} onChange={(e) => props.onUpdateClusterNode(cluster.id, n.id, { name: e.target.value })} style={input} placeholder="节点名称" />
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: '0.4rem', marginTop: '0.4rem' }}>
                         <input value={n.host} onChange={(e) => props.onUpdateClusterNode(cluster.id, n.id, { host: e.target.value })} style={input} placeholder="主机" />
@@ -319,6 +541,53 @@ export default function ClusterHomeView(props: Props) {
                     </div>
                   ))}
                   <button onClick={() => props.onAddNode(cluster.id)} style={btn}>+ 添加节点</button>
+                  <div style={{ marginTop: '0.9rem', paddingTop: '0.75rem', borderTop: '1px dashed var(--border)' }}>
+                    <div style={{ marginBottom: '0.45rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>主机探测导入</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.45rem', marginBottom: '0.45rem' }}>
+                      <input value={importUser} onChange={(e) => setImportUser(e.target.value)} style={input} placeholder="用户名" />
+                      <input type="password" value={importPassword} onChange={(e) => setImportPassword(e.target.value)} style={input} placeholder="密码" />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.45rem', marginBottom: '0.45rem' }}>
+                      <input value={importDatabase} onChange={(e) => setImportDatabase(e.target.value)} style={input} placeholder="数据库名" />
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                        <input type="checkbox" checked={autoConnectAfterImport} onChange={(e) => setAutoConnectAfterImport(e.target.checked)} />
+                        自动连接
+                      </label>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '0.45rem' }}>
+                      <input value={scanHost} onChange={(e) => setScanHost(e.target.value)} style={input} placeholder="主机 IP，例如 192.168.3.99" />
+                      <button onClick={runHostScan} style={smallBtn}>{scanLoading ? '探测中...' : '探测'}</button>
+                    </div>
+                    {scanError && <div style={{ marginTop: '0.35rem', fontSize: '0.76rem', color: 'var(--red)' }}>{scanError}</div>}
+                    {instances.map((ins, idx) => (
+                      <div key={`${ins.host}:${ins.port}-${idx}`} style={{ marginTop: '0.4rem', border: '1px solid var(--border)', borderRadius: '8px', padding: '0.45rem', background: 'var(--bg)' }}>
+                        <div style={{ fontSize: '0.78rem' }}>{ins.host}:{ins.port} | {ins.service || 'postgresql'} | 置信度: {ins.confidence || '-'}</div>
+                        <button onClick={() => importDiscovered(ins)} style={{ ...smallBtn, marginTop: '0.35rem' }}>导入到当前集群</button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ marginTop: '0.9rem', paddingTop: '0.75rem', borderTop: '1px dashed var(--border)' }}>
+                    <div style={{ marginBottom: '0.45rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>DSN 导入</div>
+                    <input value={dsn} onChange={(e) => setDsn(e.target.value)} style={input} placeholder="postgresql://user:pass@host:5432/dbname" />
+                    <div style={{ marginTop: '0.4rem' }}>
+                      <button onClick={validateAndImportDSN} style={smallBtn}>{dsnLoading ? '处理中...' : '校验并导入'}</button>
+                    </div>
+                    {dsnMessage && <div style={{ marginTop: '0.35rem', fontSize: '0.76rem', color: dsnMessage.includes('成功') ? 'var(--green)' : 'var(--red)' }}>{dsnMessage}</div>}
+                  </div>
+
+                  <div style={{ marginTop: '0.9rem', paddingTop: '0.75rem', borderTop: '1px dashed var(--border)' }}>
+                    <div style={{ marginBottom: '0.45rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>导入操作日志</span>
+                      <button onClick={() => setImportLogs([])} style={smallBtn}>清空</button>
+                    </div>
+                    {importLogs.length === 0 && <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>暂无日志</div>}
+                    {importLogs.map((x) => (
+                      <div key={`${x.ts}-${x.message}`} style={{ fontSize: '0.75rem', color: x.level === 'error' ? 'var(--red)' : x.level === 'success' ? 'var(--green)' : 'var(--text-muted)', marginBottom: '0.25rem' }}>
+                        [{new Date(x.ts).toLocaleTimeString()}] {x.message}
+                      </div>
+                    ))}
+                  </div>
                 </>
               )}
             </div>
@@ -346,6 +615,7 @@ function SummaryCard({ label, value, accent = 'var(--text)' }: { label: string; 
 
 function TopologyMap({
   cluster,
+  nodes,
   statuses,
   edges,
   selectedEdgeKey,
@@ -354,6 +624,7 @@ function TopologyMap({
   onNodeClick,
 }: {
   cluster: WorkspaceProject['clusters'][number]
+  nodes: WorkspaceProject['clusters'][number]['nodes']
   statuses: ClusterNodeStatus[]
   edges: EdgeInfo[]
   selectedEdgeKey: string
@@ -366,10 +637,10 @@ function TopologyMap({
   const y = 105
   const nodeWidth = 120
   const nodeHeight = 44
-  const gap = cluster.nodes.length <= 1 ? 0 : (width - 80 - nodeWidth) / (cluster.nodes.length - 1)
+  const gap = nodes.length <= 1 ? 0 : (width - 80 - nodeWidth) / (nodes.length - 1)
 
   const byId = new Map(statuses.map((s) => [s.id, s]))
-  const positions = cluster.nodes.map((n, idx) => ({ id: n.id, x: 40 + idx * gap, y, node: n, status: byId.get(n.id) }))
+  const positions = nodes.map((n, idx) => ({ id: n.id, x: 40 + idx * gap, y, node: n, status: byId.get(n.id) }))
   const posMap = new Map(positions.map((p) => [p.id, p]))
 
   return (
@@ -414,7 +685,7 @@ function TopologyMap({
               strokeWidth={active ? 2 : 1.2}
             />
             <text x={p.x + 10} y={p.y + 18} fontSize="11" fill="var(--text)">{p.node.name}</text>
-            <text x={p.x + 10} y={p.y + 33} fontSize="10" fill="#94a3b8">{p.node.role}</text>
+            <text x={p.x + 10} y={p.y + 33} fontSize="10" fill="#94a3b8">{p.node.role} · {sourceLabel(p.node.source)}</text>
           </g>
         )
       })}
@@ -446,4 +717,30 @@ const input: CSSProperties = {
   background: 'var(--bg)',
   color: 'var(--text)',
   fontSize: '0.8rem',
+}
+
+function sourceLabel(source?: string): string {
+  if (source === 'provisioned') return '自动拉起'
+  if (source === 'discovered') return '主机探测'
+  if (source === 'dsn') return 'DSN 导入'
+  return '手动配置'
+}
+
+function sourceBadge(source?: string): CSSProperties {
+  const color = source === 'provisioned'
+    ? '#22c55e'
+    : source === 'discovered'
+      ? '#3b82f6'
+      : source === 'dsn'
+        ? '#f59e0b'
+        : '#94a3b8'
+  return {
+    display: 'inline-block',
+    padding: '0.1rem 0.45rem',
+    borderRadius: '999px',
+    fontSize: '0.72rem',
+    border: `1px solid ${color}`,
+    color,
+    background: 'transparent',
+  }
 }

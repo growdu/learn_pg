@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react'
+﻿import type { CSSProperties } from 'react'
 import type { WorkspaceProject } from '../../types/workspace'
 
 interface Props {

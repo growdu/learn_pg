@@ -13,23 +13,30 @@ import (
 const currentWorkspaceSchemaVersion = 1
 
 type workspaceNode struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Host        string `json:"host"`
-	Port        int    `json:"port"`
-	User        string `json:"user"`
-	Password    string `json:"password"`
-	Database    string `json:"database"`
-	ClusterType string `json:"cluster_type"`
-	Role        string `json:"role"`
+	ID           string                 `json:"id"`
+	Name         string                 `json:"name"`
+	Host         string                 `json:"host"`
+	Port         int                    `json:"port"`
+	User         string                 `json:"user"`
+	Password     string                 `json:"password"`
+	Database     string                 `json:"database"`
+	ClusterType  string                 `json:"cluster_type"`
+	Role         string                 `json:"role"`
+	Source       string                 `json:"source,omitempty"`
+	DSN          string                 `json:"dsn,omitempty"`
+	InstanceMeta *workspaceInstanceMeta `json:"instanceMeta,omitempty"`
+	SSHHint      *workspaceSSHHint      `json:"sshHint,omitempty"`
 }
 
 type workspaceCluster struct {
-	ID                string          `json:"id"`
-	Name              string          `json:"name"`
-	ReplicationType   string          `json:"replicationType"`
-	AlertThresholdSec int             `json:"alertThresholdSec,omitempty"`
-	Nodes             []workspaceNode `json:"nodes"`
+	ID                string            `json:"id"`
+	Name              string            `json:"name"`
+	ReplicationType   string            `json:"replicationType"`
+	AlertThresholdSec int               `json:"alertThresholdSec,omitempty"`
+	ProvisionMode     string            `json:"provisionMode,omitempty"`
+	ProvisionTaskID   string            `json:"provisionTaskId,omitempty"`
+	Runtime           *workspaceRuntime `json:"runtime,omitempty"`
+	Nodes             []workspaceNode   `json:"nodes"`
 }
 
 type workspaceComponent struct {
@@ -44,6 +51,23 @@ type workspaceProject struct {
 	Name       string               `json:"name"`
 	Clusters   []workspaceCluster   `json:"clusters"`
 	Components []workspaceComponent `json:"components"`
+}
+
+type workspaceRuntime struct {
+	Type      string `json:"type"`
+	PGVersion string `json:"pgVersion,omitempty"`
+}
+
+type workspaceInstanceMeta struct {
+	Service string `json:"service,omitempty"`
+	DataDir string `json:"dataDir,omitempty"`
+	Version string `json:"version,omitempty"`
+}
+
+type workspaceSSHHint struct {
+	Host string `json:"host,omitempty"`
+	Port int    `json:"port,omitempty"`
+	User string `json:"user,omitempty"`
 }
 
 type workspaceEnvelope struct {
@@ -169,6 +193,54 @@ func (s *workspaceStore) deleteByID(id string) error {
 		}
 	}
 	return s.writeAll(next)
+}
+
+func (s *workspaceStore) appendCluster(projectID string, cluster workspaceCluster) error {
+	if strings.TrimSpace(projectID) == "" {
+		return fmt.Errorf("projectId is required")
+	}
+	items, err := s.readAll()
+	if err != nil {
+		return err
+	}
+	for i := range items {
+		if items[i].ID == projectID {
+			if cluster.ID == "" {
+				return fmt.Errorf("cluster id is required")
+			}
+			cluster.Nodes = normalizeProjects([]workspaceProject{{Clusters: []workspaceCluster{cluster}}})[0].Clusters[0].Nodes
+			items[i].Clusters = append(items[i].Clusters, cluster)
+			return s.writeAll(items)
+		}
+	}
+	return fmt.Errorf("project not found: %s", projectID)
+}
+
+func (s *workspaceStore) appendNode(projectID, clusterID string, node workspaceNode) error {
+	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(clusterID) == "" {
+		return fmt.Errorf("projectId and clusterId are required")
+	}
+	items, err := s.readAll()
+	if err != nil {
+		return err
+	}
+	for pi := range items {
+		if items[pi].ID != projectID {
+			continue
+		}
+		for ci := range items[pi].Clusters {
+			if items[pi].Clusters[ci].ID != clusterID {
+				continue
+			}
+			if node.ID == "" {
+				return fmt.Errorf("node id is required")
+			}
+			items[pi].Clusters[ci].Nodes = append(items[pi].Clusters[ci].Nodes, node)
+			return s.writeAll(items)
+		}
+		return fmt.Errorf("cluster not found: %s", clusterID)
+	}
+	return fmt.Errorf("project not found: %s", projectID)
 }
 
 func normalizeProjects(projects []workspaceProject) []workspaceProject {
