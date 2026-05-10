@@ -5,6 +5,7 @@ interface Props {
   project: WorkspaceProject | undefined
   onCreateComponent: () => void
   onRemoveComponent: (id: string) => void
+  onUpdateComponent: (componentId: string, patch: { name?: string; componentType?: string }) => void
   onToggleLink: (componentId: string, clusterId: string) => void
   onActivateNode: (clusterId: string, nodeId: string) => void
   highlightedComponentIds?: string[]
@@ -16,12 +17,16 @@ export default function ComponentHomeView({
   project,
   onCreateComponent,
   onRemoveComponent,
+  onUpdateComponent,
   onToggleLink,
   onActivateNode,
   highlightedComponentIds = [],
 }: Props) {
   const [expanded, setExpanded] = useState<TreeState>({})
   const [focusedComponentId, setFocusedComponentId] = useState('')
+  const [editingComponentId, setEditingComponentId] = useState('')
+  const [editingComponentName, setEditingComponentName] = useState('')
+  const [editingComponentType, setEditingComponentType] = useState('')
 
   useEffect(() => {
     if (!project) return
@@ -33,6 +38,22 @@ export default function ComponentHomeView({
 
   const isHighlighted = (id: string) => highlightedComponentIds.includes(id)
   const toggle = (id: string) => setExpanded((prev) => ({ ...prev, [id]: !prev[id] }))
+
+  const startEditComponent = (comp: { id: string; name: string; componentType: string }) => {
+    setEditingComponentId(comp.id)
+    setEditingComponentName(comp.name)
+    setEditingComponentType(comp.componentType)
+  }
+
+  const saveEditComponent = () => {
+    if (!editingComponentId) return
+    onUpdateComponent(editingComponentId, { name: editingComponentName, componentType: editingComponentType })
+    setEditingComponentId('')
+  }
+
+  const cancelEditComponent = () => {
+    setEditingComponentId('')
+  }
 
   return (
     <div style={{ padding: '1rem' }}>
@@ -141,15 +162,42 @@ export default function ComponentHomeView({
               <h3 style={{ marginTop: 0, marginBottom: '0.6rem' }}>组件详情</h3>
               {project.components.map((comp) => {
                 const linkedClusters = project.clusters.filter((c) => comp.linkedClusterIds.includes(c.id))
+                const isEditing = comp.id === editingComponentId
                 return (
                   <div key={comp.id} style={{ ...card, borderColor: isHighlighted(comp.id) ? 'var(--accent)' : 'var(--border)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: '0.88rem' }}>{comp.name}</div>
-                        <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>类型: {comp.componentType} | 关联集群: {linkedClusters.length} 个</div>
+                    {isEditing ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        <div className="input-group">
+                          <label className="input-label">组件名称</label>
+                          <input className="input" value={editingComponentName} onChange={(e) => setEditingComponentName(e.target.value)} autoFocus />
+                        </div>
+                        <div className="input-group">
+                          <label className="input-label">组件类型</label>
+                          <select className="input" value={editingComponentType} onChange={(e) => setEditingComponentType(e.target.value)}>
+                            <option value="collector">数据采集器</option>
+                            <option value="monitor">监控告警</option>
+                            <option value="backup">备份工具</option>
+                            <option value="proxy">代理服务</option>
+                            <option value="gateway">网关服务</option>
+                          </select>
+                        </div>
+                        <div className="flex gap-sm">
+                          <button className="btn btn-sm btn-success" onClick={saveEditComponent}>保存</button>
+                          <button className="btn btn-sm btn-ghost" onClick={cancelEditComponent}>取消</button>
+                        </div>
                       </div>
-                      <button onClick={() => onRemoveComponent(comp.id)} style={smallBtnDanger}>删除</button>
-                    </div>
+                    ) : (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: '0.88rem' }}>{comp.name}</div>
+                          <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>类型: {comp.componentType} | 关联集群: {linkedClusters.length} 个</div>
+                        </div>
+                        <div className="flex gap-sm">
+                          <button className="btn btn-sm btn-ghost" onClick={() => startEditComponent(comp)}>编辑</button>
+                          <button className="btn btn-sm btn-danger" onClick={() => onRemoveComponent(comp.id)}>删除</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )
               })}
@@ -233,5 +281,4 @@ const th: CSSProperties = { textAlign: 'left', padding: '0.35rem 0.5rem', fontSi
 const td: CSSProperties = { padding: '0.35rem 0.5rem', borderBottom: '1px solid var(--border)', verticalAlign: 'middle' }
 const matrixBtn: CSSProperties = { border: '1px solid var(--border)', borderRadius: '4px', padding: '0.15rem 0.4rem', cursor: 'pointer', fontSize: '0.85rem', lineHeight: 1 }
 const btn: CSSProperties = { padding: '0.42rem 0.75rem', border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }
-const smallBtnDanger: CSSProperties = { ...btn, padding: '0.25rem 0.6rem', fontSize: '0.78rem', color: 'var(--red)' }
 const card: CSSProperties = { border: '1px solid var(--border)', borderRadius: '8px', padding: '0.65rem 0.8rem', marginBottom: '0.5rem', background: 'var(--bg)' }

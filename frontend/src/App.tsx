@@ -1,6 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from 'react'
 import Header from './components/layout/Header'
-import Sidebar from './components/layout/Sidebar'
 import StatusBar from './components/layout/StatusBar'
 import SQLConsole from './components/sql/SQLConsole'
 import NodeHomeView from './components/node/NodeHomeView'
@@ -24,6 +23,7 @@ import type { WorkspaceComponent, WorkspaceProject } from './types/workspace'
 import type { ReplicationTemplate, TemplateParams } from './types/template'
 import { ALL_TEMPLATES } from './types/template'
 import type { LockEdge, LockNode } from './components/lock/LockGraphView'
+import './styles/index.css'
 
 export type View =
   | 'project_home'
@@ -225,6 +225,7 @@ function App() {
   const [projects, setProjects] = useState<WorkspaceProject[]>(() => loadProjects())
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const [selectedClusterId, setSelectedClusterId] = useState('')
+  const [selectedNodeId, setSelectedNodeId] = useState('')
   const [showTemplateDialog, setShowTemplateDialog] = useState(false)
   const [highlightedComponentIds, setHighlightedComponentIds] = useState<string[]>([])
   const [workspaceBootstrapped, setWorkspaceBootstrapped] = useState(false)
@@ -336,11 +337,21 @@ function App() {
     [projects, selectedProjectId],
   )
 
+  const selectedNodeConfig = useMemo(() => {
+    if (!selectedProject) return null
+    const cluster = selectedProject.clusters.find((c) => c.id === selectedClusterId)
+    if (!cluster) return null
+    return cluster.nodes.find((n) => n.id === selectedNodeId) ?? cluster.nodes[0] ?? null
+  }, [selectedProject, selectedClusterId, selectedNodeId])
+
   useEffect(() => {
     if (!selectedProject) return
     if (!selectedProjectId) setSelectedProjectId(selectedProject.id)
     const cluster = selectedProject.clusters.find((c) => c.id === selectedClusterId) ?? selectedProject.clusters[0]
     if (cluster && cluster.id !== selectedClusterId) setSelectedClusterId(cluster.id)
+    if (cluster && !selectedNodeId) {
+      setSelectedNodeId(cluster.nodes[0]?.id ?? '')
+    }
   }, [selectedProject, selectedProjectId, selectedClusterId])
 
   const createProject = () => {
@@ -515,6 +526,11 @@ function App() {
     }
   }
 
+  const updateProject = (projectId: string, patch: { name?: string }) => {
+    const next = projects.map((p) => (p.id !== projectId ? p : { ...p, ...patch }))
+    setProjects(next)
+  }
+
   const createCluster = () => {
     if (!selectedProject) return
     const idx = selectedProject.clusters.length + 1
@@ -540,13 +556,19 @@ function App() {
     if (selectedClusterId === id) setSelectedClusterId('')
   }
 
-  const updateClusterNode = (clusterId: string, nodeId: string, patch: Partial<ClusterNodeConfig>) => {
+  const updateClusterNode = (clusterId: string, nodeId: string, patch: Partial<ClusterNodeConfig & { name?: string; alertThresholdSec?: number }>) => {
     if (!selectedProject) return
     const next = projects.map((p) => {
       if (p.id !== selectedProject.id) return p
       return {
         ...p,
-        clusters: p.clusters.map((c) => (c.id !== clusterId ? c : { ...c, nodes: c.nodes.map((n) => (n.id !== nodeId ? n : { ...n, ...patch })) })),
+        clusters: p.clusters.map((c) => {
+          if (c.id !== clusterId) return c
+          if (!nodeId) {
+            return { ...c, ...patch }
+          }
+          return { ...c, nodes: c.nodes.map((n) => (n.id !== nodeId ? n : { ...n, ...patch })) }
+        }),
       }
     })
     setProjects(next)
@@ -594,6 +616,15 @@ function App() {
     setProjects(next)
   }
 
+  const updateComponent = (componentId: string, patch: { name?: string; componentType?: string }) => {
+    if (!selectedProject) return
+    const next = projects.map((p) => {
+      if (p.id !== selectedProject.id) return p
+      return { ...p, components: p.components.map((c) => (c.id !== componentId ? c : { ...c, ...patch } as WorkspaceComponent)) }
+    })
+    setProjects(next)
+  }
+
   const toggleLink = (componentId: string, clusterId: string) => {
     if (!selectedProject) return
     const next = projects.map((p) => {
@@ -633,6 +664,35 @@ function App() {
             onCreateProject={createProject}
             onOpenTemplateDialog={() => setShowTemplateDialog(true)}
             onRemoveProject={removeProject}
+            onUpdateProject={updateProject}
+            onNavigateToCluster={(projectId, clusterId) => {
+              setSelectedProjectId(projectId)
+              setSelectedClusterId(clusterId)
+              setCurrentView('cluster_home')
+            }}
+            onCreateCluster={(projectId) => {
+              const project = projects.find((p) => p.id === projectId)
+              if (!project) return
+              const cluster = {
+                id: genId(),
+                name: `集群 ${project.clusters.length + 1}`,
+                replicationType: 'physical' as const,
+                alertThresholdSec: 30,
+                nodes: [makeDefaultNode(1)],
+              }
+              const next = projects.map((p) => (p.id === projectId ? { ...p, clusters: [...p.clusters, cluster] } : p))
+              setProjects(next)
+              setSelectedProjectId(projectId)
+              setSelectedClusterId(cluster.id)
+              setCurrentView('cluster_home')
+            }}
+            onCreateComponent={(projectId) => {
+              const project = projects.find((p) => p.id === projectId)
+              if (!project) return
+              const comp: WorkspaceComponent = { id: genId(), name: `组件 ${project.components.length + 1}`, componentType: 'collector', linkedClusterIds: [] }
+              const next = projects.map((p) => (p.id === projectId ? { ...p, components: [...p.components, comp] } : p))
+              setProjects(next)
+            }}
           />
         )
       case 'cluster_home':
@@ -640,6 +700,7 @@ function App() {
           <ClusterHomeView
             project={selectedProject}
             selectedClusterId={selectedClusterId}
+            selectedNodeId={selectedNodeId}
             onSelectCluster={setSelectedClusterId}
             onCreateCluster={createCluster}
             onRemoveCluster={removeCluster}
@@ -648,6 +709,10 @@ function App() {
             onRemoveNode={removeNode}
             onNavigate={setCurrentView}
             onReloadWorkspace={reloadWorkspaceFromBackend}
+            onActivateNode={(clusterId, nodeId) => {
+              setSelectedClusterId(clusterId)
+              setSelectedNodeId(nodeId)
+            }}
           />
         )
       case 'component_home':
@@ -656,6 +721,7 @@ function App() {
             project={selectedProject}
             onCreateComponent={createComponent}
             onRemoveComponent={removeComponent}
+            onUpdateComponent={updateComponent}
             onToggleLink={toggleLink}
             highlightedComponentIds={highlightedComponentIds}
             onActivateNode={(clusterId, nodeId) => {
@@ -669,7 +735,18 @@ function App() {
           />
         )
       case 'node_home':
-        return <NodeHomeView onNavigate={setCurrentView} nodeLabel={nodeLabel} />
+        return (
+          <NodeHomeView
+            onNavigate={setCurrentView}
+            nodeLabel={nodeLabel}
+            selectedNodeConfig={selectedNodeConfig ? { id: selectedNodeConfig.id, name: selectedNodeConfig.name, role: selectedNodeConfig.role, cluster_type: selectedNodeConfig.cluster_type } : null}
+            nodeStatuses={[]}
+            onUpdateNode={(nodeId, patch) => {
+              if (!selectedClusterId) return
+              updateClusterNode(selectedClusterId, nodeId, patch)
+            }}
+          />
+        )
       case 'sql':
         return <SQLConsole />
       case 'wal':
@@ -697,74 +774,61 @@ function App() {
       case 'plan':
         return <PlanTreeView />
       default:
-        return <NodeHomeView onNavigate={setCurrentView} nodeLabel={nodeLabel} />
+        return (
+          <NodeHomeView
+            onNavigate={setCurrentView}
+            nodeLabel={nodeLabel}
+            selectedNodeConfig={selectedNodeConfig ? { id: selectedNodeConfig.id, name: selectedNodeConfig.name, role: selectedNodeConfig.role, cluster_type: selectedNodeConfig.cluster_type } : null}
+            nodeStatuses={[]}
+            onUpdateNode={(nodeId, patch) => {
+              if (!selectedClusterId) return
+              updateClusterNode(selectedClusterId, nodeId, patch)
+            }}
+          />
+        )
     }
   }
 
-  const nodeActive = connected
-  const projectActive = !!selectedProject
   const nodeLabel = `${storeConfig.host}:${storeConfig.port}/${storeConfig.database}`
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <Header connected={connected} pgVersion={pgVersion} wsConnected={wsConnected} />
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        <Sidebar currentView={currentView} onNavigate={setCurrentView} projectActive={projectActive} nodeActive={nodeActive} nodeLabel={nodeLabel} />
-        <main style={{ flex: 1, overflow: 'auto', padding: '0' }}>
-          {provisionTask && (
-            <div
-              style={{
-                padding: '0.45rem 1rem',
-                borderBottom: '1px solid var(--border)',
-                background:
-                  provisionTask.status === 'failed'
-                    ? 'rgba(239,68,68,0.15)'
-                    : provisionTask.status === 'success'
-                      ? 'rgba(34,197,94,0.15)'
-                      : 'rgba(59,130,246,0.12)',
-              }}
-            >
-              <div style={{ fontSize: '0.78rem', color: 'var(--text)' }}>
+      <main style={{ flex: 1, overflow: 'auto' }}>
+        {provisionTask && (
+            <div className={`task-bar ${provisionTask.status === 'failed' ? 'task-bar-failed' : provisionTask.status === 'success' ? 'task-bar-success' : 'task-bar-running'}`}>
+              <div className="task-bar-info">
                 任务 {provisionTask.taskId} · {taskStatusLabel(provisionTask.status)} · {provisionTask.progress}% · {provisionTask.message}
               </div>
-              <div style={{ marginTop: '0.2rem', fontSize: '0.74rem', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className="task-bar-meta">
                 <span>
                   {provisionTask.startedAt
                     ? `耗时 ${Math.max(0, Math.floor(((provisionTask.finishedAt ?? Date.now()) - provisionTask.startedAt) / 1000))}s`
                     : ''}
                 </span>
-                <button
-                  onClick={() => void refreshProvisionTask()}
-                  style={{ border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.72rem', cursor: 'pointer', padding: '0.1rem 0.45rem', marginRight: '0.35rem' }}
-                >
-                  刷新
-                </button>
-                <button
-                  onClick={() => {
-                    setShowRecentTasks((v) => !v)
-                  }}
-                  style={{ border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.72rem', cursor: 'pointer', padding: '0.1rem 0.45rem', marginRight: '0.35rem' }}
-                >
-                  最近任务
-                </button>
-                <button
-                  onClick={() => setProvisionTask(null)}
-                  style={{ border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.72rem', cursor: 'pointer', padding: '0.1rem 0.45rem' }}
-                >
-                  关闭
-                </button>
+                <div className="task-bar-actions">
+                  <button className="task-btn" onClick={() => void refreshProvisionTask()}>
+                    刷新
+                  </button>
+                  <button className="task-btn" onClick={() => setShowRecentTasks((v) => !v)}>
+                    最近任务
+                  </button>
+                  <button className="task-btn" onClick={() => setProvisionTask(null)}>
+                    关闭
+                  </button>
+                </div>
               </div>
-              <div style={{ marginTop: '0.25rem', height: '6px', background: 'rgba(148,163,184,0.35)', borderRadius: '999px' }}>
-                <div style={{ width: `${Math.max(0, Math.min(100, provisionTask.progress))}%`, height: '100%', background: 'var(--accent)', borderRadius: '999px' }} />
+              <div className="progress-track" style={{ marginTop: '0.25rem' }}>
+                <div className="progress-fill" style={{ width: `${Math.max(0, Math.min(100, provisionTask.progress))}%` }} />
               </div>
               {showRecentTasks && (
                 <div style={{ marginTop: '0.45rem', borderTop: '1px dashed var(--border)', paddingTop: '0.35rem' }}>
                   <div style={{ marginBottom: '0.35rem', display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
-                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>筛选</span>
+                    <span style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>筛选</span>
                     <select
+                      className="task-select"
                       value={recentTaskFilter}
                       onChange={(e) => setRecentTaskFilter(e.target.value as 'all' | 'running' | 'success' | 'failed')}
-                      style={{ border: '1px solid var(--border)', borderRadius: '6px', background: 'var(--bg)', color: 'var(--text)', fontSize: '0.72rem', padding: '0.1rem 0.35rem' }}
                     >
                       <option value="all">全部</option>
                       <option value="running">进行中</option>
@@ -772,19 +836,11 @@ function App() {
                       <option value="failed">失败</option>
                     </select>
                   </div>
-                  {recentTasks.length === 0 && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>暂无历史任务</div>}
+                  {recentTasks.length === 0 && <div style={{ fontSize: 'var(--font-xs)', color: 'var(--text-muted)' }}>暂无历史任务</div>}
                   {recentTasks.map((t) => (
                     <div
                       key={t.taskId}
-                      style={{
-                        fontSize: '0.72rem',
-                        color: t.status === 'failed' ? '#ef4444' : 'var(--text-muted)',
-                        marginBottom: '0.28rem',
-                        padding: '0.2rem 0.3rem',
-                        border: '1px solid var(--border)',
-                        borderRadius: '6px',
-                        background: t.status === 'failed' ? 'rgba(239,68,68,0.08)' : 'transparent',
-                      }}
+                      className={`task-item ${t.status === 'failed' ? 'task-item-failed' : ''}`}
                     >
                       <div>{t.taskId} · {taskStatusLabel(t.status)} · {t.progress}%</div>
                       <div style={{ marginTop: '0.12rem' }}>{t.message || '-'}</div>
@@ -800,18 +856,19 @@ function App() {
             </div>
           )}
           {workspaceSyncError && (
-            <div style={{ padding: '0.5rem 1rem', borderBottom: '1px solid var(--border)', background: 'rgba(245,158,11,0.12)', color: '#f59e0b', fontSize: '0.8rem' }}>
+            <div className="warning-banner">
               {workspaceSyncError}
             </div>
           )}
-          <div style={{ padding: '0.6rem 1rem', borderBottom: '1px solid var(--border)', background: 'var(--bg-secondary)', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+          <div className="breadcrumb">
             {['project_home', 'cluster_home', 'component_home'].includes(currentView)
-              ? `项目工作区 / ${selectedProject?.name ?? '未选择项目'}`
-              : `节点工作区 / ${nodeLabel}`}
+              ? selectedProject
+                ? `项目工作区 / ${selectedProject.name}${currentView === 'cluster_home' ? ` / 集群 ${selectedProject.clusters.find((c) => c.id === selectedClusterId)?.name ?? ''}` : ''}`
+                : '项目工作区 / 未选择项目'
+              : `节点工作区 / ${selectedNodeConfig ? `${selectedNodeConfig.name} (${selectedNodeConfig.role})` : nodeLabel}`}
           </div>
           {renderView()}
         </main>
-      </div>
       <StatusBar collectorMode={collectorMode} connected={connected} eventCount={eventCount} lastEventType={lastEventType} wsConnected={wsConnected} />
       {showTemplateDialog && (
         <TemplateDialog

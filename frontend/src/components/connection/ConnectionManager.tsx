@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { usePGStore, type PGConfig } from '../../stores/pgStore'
+import '../../styles/index.css'
 
 export interface ConnectionProfile {
   id: string
@@ -22,7 +23,7 @@ function loadProfiles(): ConnectionProfile[] {
     {
       id: 'default',
       name: 'Local PostgreSQL',
-      host: 'pgv-postgres',
+      host: 'localhost',
       port: 5432,
       user: 'postgres',
       password: 'postgres',
@@ -49,13 +50,12 @@ export default function ConnectionManager({ onConnect, onVersion }: Props) {
   const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState('')
 
-  // Sync global store to active profile on mount
   useEffect(() => {
     if (connected) {
       const cfg = usePGStore.getState().config
       setActiveProfile({ id: 'current', name: 'Current', ...cfg })
     }
-  }, [])
+  }, [connected, setActiveProfile])
 
   const handleConnect = async (profile: ConnectionProfile) => {
     setConnecting(true)
@@ -143,49 +143,75 @@ export default function ConnectionManager({ onConnect, onVersion }: Props) {
 
   if (isEditing && editingProfile) {
     return (
-      <div style={{ padding: '2rem', maxWidth: '600px', margin: '0 auto' }}>
-        <h2 style={{ color: 'var(--text)', marginBottom: '1.5rem' }}>
+      <div className="panel panel-sm fade-in">
+        <h2 className="section-title" style={{ marginBottom: '1.5rem' }}>
           {editingProfile.id && profiles.find((p) => p.id === editingProfile.id) ? 'Edit Connection' : 'New Connection'}
         </h2>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <div>
-            <label style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Profile Name</label>
+        <div className="input-grid">
+          <div className="input-group">
+            <label className="input-label">Profile Name</label>
             <input
+              className="input"
               value={editingProfile.name || ''}
               onChange={(e) => setEditingProfile({ ...editingProfile, name: e.target.value })}
               placeholder="Local PG 18"
-              style={inputStyle}
             />
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: '0.5rem' }}>
-            <div>
-              <label style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Host</label>
-              <input value={editingProfile.host || ''} onChange={(e) => setEditingProfile({ ...editingProfile, host: e.target.value })} style={inputStyle} />
+          <div className="input-row">
+            <div className="input-group" style={{ flex: 1 }}>
+              <label className="input-label">Host</label>
+              <input
+                className="input"
+                value={editingProfile.host || ''}
+                onChange={(e) => setEditingProfile({ ...editingProfile, host: e.target.value })}
+                placeholder="localhost"
+              />
             </div>
-            <div>
-              <label style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Port</label>
-              <input type="number" value={editingProfile.port || 5432} onChange={(e) => setEditingProfile({ ...editingProfile, port: Number(e.target.value) })} style={inputStyle} />
+            <div className="input-group" style={{ width: '100px' }}>
+              <label className="input-label">Port</label>
+              <input
+                className="input"
+                type="number"
+                value={editingProfile.port || 5432}
+                onChange={(e) => setEditingProfile({ ...editingProfile, port: Number(e.target.value) })}
+              />
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-            <div>
-              <label style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>User</label>
-              <input value={editingProfile.user || ''} onChange={(e) => setEditingProfile({ ...editingProfile, user: e.target.value })} style={inputStyle} />
+          <div className="input-row">
+            <div className="input-group" style={{ flex: 1 }}>
+              <label className="input-label">User</label>
+              <input
+                className="input"
+                value={editingProfile.user || ''}
+                onChange={(e) => setEditingProfile({ ...editingProfile, user: e.target.value })}
+                placeholder="postgres"
+              />
             </div>
-            <div>
-              <label style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Password</label>
-              <input type="password" value={editingProfile.password || ''} onChange={(e) => setEditingProfile({ ...editingProfile, password: e.target.value })} style={inputStyle} />
+            <div className="input-group" style={{ flex: 1 }}>
+              <label className="input-label">Password</label>
+              <input
+                className="input"
+                type="password"
+                value={editingProfile.password || ''}
+                onChange={(e) => setEditingProfile({ ...editingProfile, password: e.target.value })}
+                placeholder="••••••••"
+              />
             </div>
           </div>
-          <div>
-            <label style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>Database</label>
-            <input value={editingProfile.database || ''} onChange={(e) => setEditingProfile({ ...editingProfile, database: e.target.value })} style={inputStyle} />
+          <div className="input-group">
+            <label className="input-label">Database</label>
+            <input
+              className="input"
+              value={editingProfile.database || ''}
+              onChange={(e) => setEditingProfile({ ...editingProfile, database: e.target.value })}
+              placeholder="postgres"
+            />
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-            <button onClick={handleSaveProfile} style={{ ...btnStyle, background: 'var(--accent)' }}>
+          <div className="flex gap-sm" style={{ marginTop: '0.5rem' }}>
+            <button className="btn" onClick={handleSaveProfile}>
               Save
             </button>
-            <button onClick={cancelEdit} style={{ ...btnStyle, background: 'var(--bg-tertiary)' }}>
+            <button className="btn btn-ghost" onClick={cancelEdit}>
               Cancel
             </button>
           </div>
@@ -195,88 +221,84 @@ export default function ConnectionManager({ onConnect, onVersion }: Props) {
   }
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '700px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+    <div className="panel fade-in">
+      <div className="section-header">
         <div>
-          <h1 style={{ fontSize: '1.5rem', color: 'var(--text)', margin: 0 }}>PostgreSQL 内核可视化平台</h1>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', margin: '0.25rem 0 0' }}>选择服务器连接</p>
+          <h1 className="section-title">PostgreSQL Kernel Visualizer</h1>
+          <p className="section-subtitle">Select a server to connect</p>
         </div>
-        <button onClick={startAdd} style={{ ...btnStyle, background: 'var(--accent)' }}>
+        <button className="btn" onClick={startAdd}>
           + New Connection
         </button>
       </div>
 
       {error && (
-        <div style={{ padding: '0.75rem', background: 'rgba(239,68,68,0.1)', border: '1px solid var(--red)', borderRadius: '8px', color: 'var(--red)', fontSize: '0.875rem', marginBottom: '1rem' }}>
+        <div className="alert alert-error" style={{ marginBottom: '1rem' }}>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 3a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 018 4zm0 8a1 1 0 100-2 1 1 0 000 2z"/>
+          </svg>
           {error}
         </div>
       )}
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-        {profiles.map((profile) => (
-          <div
-            key={profile.id}
-            style={{
-              padding: '1rem 1.25rem',
-              background: 'var(--bg-secondary)',
-              border: `1px solid ${activeProfile?.id === profile.id ? 'var(--accent)' : 'var(--border)'}`,
-              borderRadius: '8px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: '0.25rem' }}>{profile.name}</div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontFamily: 'Consolas, monospace' }}>
-                {profile.host}:{profile.port}/{profile.database}
+      <div className="flex flex-col gap-md">
+        {profiles.map((profile) => {
+          const isActive = activeProfile?.id === profile.id && connected
+          return (
+            <div key={profile.id} className={`card ${isActive ? 'card-active' : ''}`}>
+              <div>
+                <div className="card-title">{profile.name}</div>
+                <div className="card-subtitle">
+                  {profile.host}:{profile.port}/{profile.database}
+                </div>
+                <div className="card-meta">user: {profile.user}</div>
               </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>user: {profile.user}</div>
-            </div>
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-              <button
-                onClick={() => handleConnect(profile)}
-                disabled={connecting}
-                style={{
-                  ...btnStyle,
-                  background: activeProfile?.id === profile.id && connected ? 'var(--green)' : 'var(--accent)',
-                }}
-              >
-                {connecting ? '...' : activeProfile?.id === profile.id && connected ? 'Connected' : 'Connect'}
-              </button>
-              <button onClick={() => startEdit(profile)} style={{ ...btnStyle, background: 'var(--bg-tertiary)', padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}>
-                Edit
-              </button>
-              {profile.id !== 'default' && (
-                <button onClick={() => handleDeleteProfile(profile.id)} style={{ ...btnStyle, background: 'rgba(239,68,68,0.1)', color: 'var(--red)', padding: '0.25rem 0.75rem', fontSize: '0.75rem' }}>
-                  Del
+              <div className="flex gap-sm items-center">
+                {isActive ? (
+                  <span className="badge badge-success">
+                    <span className="pulse" style={{ width: 6, height: 6, borderRadius: '50%', background: 'currentColor', display: 'inline-block', marginRight: 4 }} />
+                    Connected
+                  </span>
+                ) : (
+                  <button
+                    className="btn btn-sm"
+                    onClick={() => handleConnect(profile)}
+                    disabled={connecting}
+                  >
+                    {connecting ? 'Connecting...' : 'Connect'}
+                  </button>
+                )}
+                <button className="btn btn-sm btn-ghost" onClick={() => startEdit(profile)}>
+                  Edit
                 </button>
-              )}
+                {profile.id !== 'default' && (
+                  <button className="btn btn-sm btn-danger" onClick={() => handleDeleteProfile(profile.id)}>
+                    Del
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
+      </div>
+
+      <div style={{ marginTop: '2rem', padding: '1.5rem', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border)' }}>
+        <h3 className="card-title" style={{ marginBottom: '0.75rem' }}>Quick Tips</h3>
+        <ul style={{ color: 'var(--text-muted)', fontSize: 'var(--font-sm)', listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <li className="flex items-center gap-sm">
+            <span style={{ color: 'var(--accent)' }}>→</span>
+            Make sure PostgreSQL is running and accessible
+          </li>
+          <li className="flex items-center gap-sm">
+            <span style={{ color: 'var(--accent)' }}>→</span>
+            Check pg_hba.conf for authentication settings
+          </li>
+          <li className="flex items-center gap-sm">
+            <span style={{ color: 'var(--accent)' }}>→</span>
+            For remote hosts, ensure listen_addresses includes the interface
+          </li>
+        </ul>
       </div>
     </div>
   )
-}
-
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '0.5rem 0.75rem',
-  background: 'var(--bg)',
-  color: 'var(--text)',
-  border: '1px solid var(--border)',
-  borderRadius: '6px',
-  fontSize: '0.875rem',
-  boxSizing: 'border-box',
-}
-
-const btnStyle: React.CSSProperties = {
-  padding: '0.4rem 1rem',
-  color: 'white',
-  border: 'none',
-  borderRadius: '6px',
-  cursor: 'pointer',
-  fontSize: '0.875rem',
-  fontWeight: 500,
 }

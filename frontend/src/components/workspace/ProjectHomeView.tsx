@@ -1,4 +1,4 @@
-﻿import type { CSSProperties } from 'react'
+import { useState, useMemo } from 'react'
 import type { WorkspaceProject } from '../../types/workspace'
 
 interface Props {
@@ -8,6 +8,10 @@ interface Props {
   onCreateProject: () => void
   onOpenTemplateDialog: () => void
   onRemoveProject: (id: string) => void
+  onUpdateProject: (projectId: string, patch: { name?: string }) => void
+  onNavigateToCluster: (projectId: string, clusterId: string) => void
+  onCreateCluster: (projectId: string) => void
+  onCreateComponent: (projectId: string) => void
 }
 
 export default function ProjectHomeView({
@@ -17,133 +21,225 @@ export default function ProjectHomeView({
   onCreateProject,
   onOpenTemplateDialog,
   onRemoveProject,
+  onUpdateProject,
+  onNavigateToCluster,
+  onCreateCluster,
+  onCreateComponent,
 }: Props) {
+  const [editingProjectId, setEditingProjectId] = useState('')
+  const [editingProjectName, setEditingProjectName] = useState('')
+
+  const startEditProject = (project: WorkspaceProject) => {
+    setEditingProjectId(project.id)
+    setEditingProjectName(project.name)
+  }
+
+  const saveEditProject = () => {
+    if (!editingProjectId) return
+    onUpdateProject(editingProjectId, { name: editingProjectName })
+    setEditingProjectId('')
+  }
+
+  const cancelEditProject = () => {
+    setEditingProjectId('')
+  }
+
   const selected = projects.find((p) => p.id === selectedProjectId) ?? projects[0]
 
+  const getProjectStats = useMemo(() => (project: WorkspaceProject) => {
+    const clusterCount = project.clusters.length
+    const nodeCount = project.clusters.reduce((acc, c) => acc + c.nodes.length, 0)
+    const componentCount = project.components.length
+    const primaryCount = project.clusters.reduce((acc, c) => acc + c.nodes.filter((n) => n.role === 'primary').length, 0)
+    const standbyCount = nodeCount - primaryCount
+    return { clusterCount, nodeCount, componentCount, primaryCount, standbyCount }
+  }, [])
+
+  const totalStats = useMemo(() => ({
+    projects: projects.length,
+    clusters: projects.reduce((acc, p) => acc + p.clusters.length, 0),
+    nodes: projects.reduce((acc, p) => acc + p.clusters.reduce((a, c) => a + c.nodes.length, 0), 0),
+    components: projects.reduce((acc, p) => acc + p.components.length, 0),
+  }), [projects])
+
   return (
-    <div style={{ padding: '1rem' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-        <h2 style={{ margin: 0 }}>项目主页</h2>
-        <div style={{ display: 'flex', gap: '0.4rem' }}>
-          <button onClick={onOpenTemplateDialog} style={btn}>+ 从模板创建</button>
-          <button onClick={onCreateProject} style={btn}>+ 新建空白项目</button>
+    <div className="page-container">
+      {/* Header */}
+      <div className="page-header">
+        <div>
+          <h2 className="section-title" style={{ margin: 0 }}>项目总览</h2>
+          <p className="section-subtitle">管理所有项目、集群和组件</p>
+        </div>
+        <div className="flex gap-sm">
+          <button className="btn" onClick={onOpenTemplateDialog}>从模板创建</button>
+          <button className="btn btn-success" onClick={onCreateProject}>新建项目</button>
         </div>
       </div>
 
-      <div style={{ color: 'var(--text-muted)', fontSize: '0.84rem', marginBottom: '0.8rem' }}>
-        先创建项目，再创建集群和组件，最后进入节点观测。这里展示项目级拓扑总览。
+      {/* Global Stats */}
+      <div className="stats-grid">
+        <div className="stat-card">
+          <div className="stat-card-icon stat-card-icon-blue">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 3h18v18H3zM3 9h18M9 21V9"/>
+            </svg>
+          </div>
+          <div className="stat-card-content">
+            <div className="stat-card-value">{totalStats.projects}</div>
+            <div className="stat-card-label">项目</div>
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-card-icon stat-card-icon-green">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/>
+              <line x1="12" y1="8" x2="5" y2="16"/><line x1="12" y1="8" x2="19" y2="16"/>
+            </svg>
+          </div>
+          <div className="stat-card-content">
+            <div className="stat-card-value">{totalStats.clusters}</div>
+            <div className="stat-card-label">集群</div>
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-card-icon stat-card-icon-purple">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
+          </div>
+          <div className="stat-card-content">
+            <div className="stat-card-value">{totalStats.nodes}</div>
+            <div className="stat-card-label">节点</div>
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-card-icon stat-card-icon-yellow">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+            </svg>
+          </div>
+          <div className="stat-card-content">
+            <div className="stat-card-value">{totalStats.components}</div>
+            <div className="stat-card-label">组件</div>
+          </div>
+        </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '0.9rem' }}>
-        <div style={panel}>
-          <h3 style={{ marginTop: 0, marginBottom: '0.6rem' }}>项目列表</h3>
-          {projects.length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>暂无项目，请先新建。</div>}
-          {projects.map((p) => (
-            <div
-              key={p.id}
-              style={{
-                border: '1px solid var(--border)',
-                borderRadius: '8px',
-                padding: '0.6rem',
-                marginBottom: '0.5rem',
-                background: p.id === selected?.id ? 'var(--bg-tertiary)' : 'var(--bg)',
-              }}
-            >
-              <div style={{ fontWeight: 700 }}>{p.name}</div>
-              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                集群: {p.clusters.length} | 组件: {p.components.length} | 节点: {p.clusters.reduce((acc, c) => acc + c.nodes.length, 0)}
-              </div>
-              <div style={{ marginTop: '0.45rem', display: 'flex', gap: '0.4rem' }}>
-                <button onClick={() => onSelectProject(p.id)} style={smallBtn}>选择</button>
-                <button onClick={() => onRemoveProject(p.id)} style={smallBtnDanger}>删除</button>
-              </div>
-            </div>
-          ))}
+      {/* Projects */}
+      {projects.length === 0 ? (
+        <div className="empty-state-card">
+          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity: 0.3 }}>
+            <path d="M3 3h18v18H3zM3 9h18M9 21V9"/>
+          </svg>
+          <p className="text-muted" style={{ marginTop: '1rem' }}>暂无项目</p>
+          <p className="text-xs text-muted" style={{ marginTop: '0.5rem' }}>点击上方按钮创建第一个项目</p>
         </div>
-
-        <div style={panel}>
-          <h3 style={{ marginTop: 0 }}>项目拓扑总览</h3>
-          {!selected && <div style={{ color: 'var(--text-muted)' }}>请选择项目查看拓扑。</div>}
-          {selected && (
-            <>
-              <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '0.6rem' }}>项目：{selected.name}</div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                <div style={subPanel}>
-                  <div style={subTitle}>集群与节点</div>
-                  {selected.clusters.length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>暂无集群</div>}
-                  {selected.clusters.map((c) => (
-                    <div key={c.id} style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '0.45rem', marginBottom: '0.4rem', background: 'var(--bg)' }}>
-                      <div style={{ fontWeight: 700, fontSize: '0.84rem' }}>{c.name}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
-                        类型: {c.replicationType === 'physical' ? '物理复制' : '逻辑复制'} | 节点: {c.nodes.length}
+      ) : (
+        <div className="cards-grid">
+          {projects.map((p) => {
+            const stats = getProjectStats(p)
+            const isSelected = p.id === selected?.id
+            const isEditing = p.id === editingProjectId
+            return (
+              <div
+                key={p.id}
+                className={`entity-card ${isSelected ? 'entity-card-selected' : ''}`}
+                onClick={() => !isEditing && onSelectProject(p.id)}
+              >
+                {isEditing ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    <div className="input-group">
+                      <label className="input-label">项目名称</label>
+                      <input className="input" value={editingProjectName} onChange={(e) => setEditingProjectName(e.target.value)} autoFocus />
+                    </div>
+                    <div className="flex gap-sm">
+                      <button className="btn btn-sm btn-success" onClick={saveEditProject}>保存</button>
+                      <button className="btn btn-sm btn-ghost" onClick={cancelEditProject}>取消</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    <div className="entity-card-header">
+                      <div className="entity-card-icon entity-card-icon-blue">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M3 3h18v18H3zM3 9h18M9 21V9"/>
+                        </svg>
                       </div>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginTop: '0.3rem' }}>
-                        {c.nodes.map((n) => (
-                          <span key={n.id} style={chip}>{n.name}({n.role})</span>
-                        ))}
+                      <div className="entity-card-title">
+                        <span className="entity-card-name">{p.name}</span>
+                        {isSelected && <span className="badge badge-sm badge-info">已选中</span>}
+                      </div>
+                      <button className="btn btn-sm btn-ghost" onClick={(e) => { e.stopPropagation(); startEditProject(p); }}>编辑</button>
+                      <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); onRemoveProject(p.id); }}>删除</button>
+                    </div>
+                    <div className="entity-card-stats">
+                      <div className="entity-stat">
+                        <span className="entity-stat-value">{stats.clusterCount}</span>
+                        <span className="entity-stat-label">集群</span>
+                      </div>
+                      <div className="entity-stat-divider" />
+                      <div className="entity-stat">
+                        <span className="entity-stat-value">{stats.nodeCount}</span>
+                        <span className="entity-stat-label">节点</span>
+                      </div>
+                      <div className="entity-stat-divider" />
+                      <div className="entity-stat">
+                        <span className="entity-stat-value">{stats.componentCount}</span>
+                        <span className="entity-stat-label">组件</span>
                       </div>
                     </div>
-                  ))}
-                </div>
-
-                <div style={subPanel}>
-                  <div style={subTitle}>组件与关联关系</div>
-                  {selected.components.length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>暂无组件</div>}
-                  {selected.components.map((comp) => {
-                    const linked = selected.clusters.filter((c) => comp.linkedClusterIds.includes(c.id))
-                    return (
-                      <div key={comp.id} style={{ border: '1px solid var(--border)', borderRadius: '8px', padding: '0.45rem', marginBottom: '0.4rem', background: 'var(--bg)' }}>
-                        <div style={{ fontWeight: 700, fontSize: '0.84rem' }}>{comp.name}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>类型: {comp.componentType}</div>
-                        <div style={{ marginTop: '0.25rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                          关联集群: {linked.length > 0 ? linked.map((c) => c.name).join('，') : '未关联'}
+                    <div className="flex gap-sm" style={{ marginTop: '0.5rem' }}>
+                      <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); onCreateCluster(p.id); }}>+ 集群</button>
+                      <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); onCreateComponent(p.id); }}>+ 组件</button>
+                    </div>
+                    <div className="entity-card-section">
+                      <div className="entity-card-section-title">集群</div>
+                      {stats.clusterCount === 0 ? (
+                        <div className="entity-card-empty">暂无集群</div>
+                      ) : (
+                        <div className="entity-chips">
+                          {p.clusters.map((c) => (
+                            <div
+                              key={c.id}
+                              className="entity-chip entity-chip-clickable"
+                              onClick={(e) => { e.stopPropagation(); handleClusterClick(p.id, c.id); }}
+                            >
+                              <span className="entity-chip-name">{c.name}</span>
+                              <span className={`badge badge-xs ${c.replicationType === 'physical' ? 'badge-info' : 'badge-warning'}`}>
+                                {c.replicationType === 'physical' ? '物理' : '逻辑'}
+                              </span>
+                            </div>
+                          ))}
                         </div>
-                      </div>
-                    )
-                  })}
-                </div>
+                      )}
+                    </div>
+                    <div className="entity-card-section">
+                      <div className="entity-card-section-title">组件</div>
+                      {stats.componentCount === 0 ? (
+                        <div className="entity-card-empty">暂无组件</div>
+                      ) : (
+                        <div className="entity-chips">
+                          {p.components.map((comp) => (
+                            <div key={comp.id} className="entity-chip">
+                              <span className="entity-chip-name">{comp.name}</span>
+                              <span className="badge badge-xs badge-info">{comp.componentType}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
-            </>
-          )}
+            )
+          })}
         </div>
-      </div>
+      )}
     </div>
   )
-}
 
-const panel: CSSProperties = {
-  border: '1px solid var(--border)',
-  borderRadius: '10px',
-  background: 'var(--bg-secondary)',
-  padding: '0.75rem',
-}
-const subPanel: CSSProperties = {
-  border: '1px solid var(--border)',
-  borderRadius: '8px',
-  background: 'var(--bg-secondary)',
-  padding: '0.6rem',
-}
-const subTitle: CSSProperties = {
-  fontSize: '0.8rem',
-  color: 'var(--text-muted)',
-  marginBottom: '0.45rem',
-  fontWeight: 700,
-}
-const btn: CSSProperties = {
-  padding: '0.42rem 0.75rem',
-  border: '1px solid var(--border)',
-  borderRadius: '6px',
-  background: 'var(--bg)',
-  color: 'var(--text)',
-  cursor: 'pointer',
-}
-const smallBtn: CSSProperties = { ...btn, padding: '0.25rem 0.6rem', fontSize: '0.78rem' }
-const smallBtnDanger: CSSProperties = { ...smallBtn, color: 'var(--red)' }
-const chip: CSSProperties = {
-  border: '1px solid var(--border)',
-  borderRadius: '999px',
-  padding: '0.2rem 0.5rem',
-  fontSize: '0.74rem',
-  background: 'var(--bg)',
+  function handleClusterClick(projectId: string, clusterId: string) {
+    onSelectProject(projectId)
+    onNavigateToCluster(projectId, clusterId)
+  }
 }
