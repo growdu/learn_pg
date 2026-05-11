@@ -42,7 +42,7 @@ interface DiscoveredInstance {
 }
 
 export default function ClusterHomeView(props: Props) {
-  const { setConfig, setConnected, setVersion } = usePGStore()
+  const {} = usePGStore()
   const [overview, setOverview] = useState<OverviewState>({ loading: false, error: '', nodes: [], timestamp: 0 })
   const [selectedEdgeKey, setSelectedEdgeKey] = useState('')
   const [selectedNodeId, setSelectedNodeId] = useState('')
@@ -110,15 +110,14 @@ export default function ClusterHomeView(props: Props) {
   }, [props.project, requestNodes])
 
   const activateNode = async (node: ClusterNodeConfig, view: View) => {
-    const res = await fetch('/api/connect', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ host: node.host, port: node.port, user: node.user, database: node.database }),
-    })
+    const res = await fetch(`/api/nodes/${node.id}/activate`, { method: 'POST' })
     const data = await res.json()
-    if (!data.success) return
-    setConfig({ host: node.host, port: node.port, user: node.user, database: node.database })
-    setConnected(true)
-    setVersion(data.version || '')
+    if (data.success) {
+      usePGStore.getState().setActiveNodeId(node.id)
+      usePGStore.getState().setConnected(true)
+      usePGStore.getState().setVersion(data.version || '')
+      usePGStore.getState().setDataDir(data.dataDir || '')
+    }
     props.onNavigate(view)
   }
 
