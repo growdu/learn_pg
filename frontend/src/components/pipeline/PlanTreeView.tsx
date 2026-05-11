@@ -14,9 +14,10 @@ export interface PlanNode {
 
 interface PlanTreeViewProps {
   plan?: PlanNode
+  onGoBack?: () => void
 }
 
-export default function PlanTreeView({ plan }: PlanTreeViewProps) {
+export default function PlanTreeView({ plan, onGoBack }: PlanTreeViewProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [selected, setSelected] = useState<PlanNode | null>(null)
@@ -90,6 +91,7 @@ export default function PlanTreeView({ plan }: PlanTreeViewProps) {
         source="EXPLAIN (FORMAT JSON) 计划数据"
         updatedAtText={new Date().toLocaleTimeString('zh-CN', { hour12: false })}
         rightSlot={<div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>颜色深浅表示 cost，高亮节点可查看详情</div>}
+        onBack={onGoBack}
       />
 
       {!plan && (

@@ -19,6 +19,7 @@ export interface LockEdge {
 interface LockGraphViewProps {
   nodes?: LockNode[]
   edges?: LockEdge[]
+  onGoBack?: () => void
 }
 
 interface SimNode extends d3.SimulationNodeDatum, LockNode {}
@@ -59,7 +60,7 @@ function detectCycle(nodes: SimNode[], links: SimLink[]): string[][] {
   return cycles
 }
 
-export default function LockGraphView({ nodes, edges }: LockGraphViewProps) {
+export default function LockGraphView({ nodes, edges, onGoBack }: LockGraphViewProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [selectedNode, setSelectedNode] = useState<LockNode | null>(null)
@@ -191,6 +192,7 @@ export default function LockGraphView({ nodes, edges }: LockGraphViewProps) {
             </span>
           ) : null
         }
+        onBack={onGoBack}
       />
 
       <div ref={containerRef} style={{ background: 'var(--bg-secondary)', borderRadius: '8px', border: '1px solid var(--border)', minHeight: '400px', overflow: 'hidden' }}>

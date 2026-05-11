@@ -713,6 +713,22 @@ function App() {
               setSelectedClusterId(clusterId)
               setSelectedNodeId(nodeId)
             }}
+            onNodeDoubleClick={(node) => {
+              if (!selectedClusterId) return
+              setSelectedNodeId(node.id)
+              void (async () => {
+                const res = await fetch('/api/connect', {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ host: node.host, port: node.port, user: node.user, password: node.password, database: node.database }),
+                })
+                const data = await res.json()
+                if (!data.success) return
+                usePGStore.getState().setConfig({ host: node.host, port: node.port, user: node.user, password: node.password, database: node.database })
+                usePGStore.getState().setConnected(true)
+                usePGStore.getState().setVersion(data.version || '')
+                setCurrentView('node_home')
+              })()
+            }}
           />
         )
       case 'component_home':
@@ -745,34 +761,36 @@ function App() {
               if (!selectedClusterId) return
               updateClusterNode(selectedClusterId, nodeId, patch)
             }}
+            onGoBack={() => setCurrentView('cluster_home')}
           />
         )
       case 'sql':
-        return <SQLConsole />
+        return <SQLConsole onGoBack={() => setCurrentView('node_home')} />
       case 'wal':
-        return <WALViewer />
+        return <WALViewer onGoBack={() => setCurrentView('node_home')} />
       case 'clog':
-        return <CLOGViewer />
+        return <CLOGViewer onGoBack={() => setCurrentView('node_home')} />
       case 'write':
-        return <PipelineView type="write" stages={writeStages} />
+        return <PipelineView type="write" stages={writeStages} onGoBack={() => setCurrentView('node_home')} />
       case 'read':
-        return <PipelineView type="read" />
+        return <PipelineView type="read" onGoBack={() => setCurrentView('node_home')} />
       case 'transaction':
-        return <PipelineView type="transaction" />
+        return <PipelineView type="transaction" onGoBack={() => setCurrentView('node_home')} />
       case 'xact_state':
         return (
           <TransactionStateView
             transactions={snapshotTransactions.length > 0 ? snapshotTransactions : transactions.length > 0 ? transactions : undefined}
+            onGoBack={() => setCurrentView('node_home')}
           />
         )
       case 'buffer':
-        return <BufferHeatmapView buffers={buffers.length > 0 ? buffers : undefined} />
+        return <BufferHeatmapView buffers={buffers.length > 0 ? buffers : undefined} onGoBack={() => setCurrentView('node_home')} />
       case 'lock':
-        return <LockGraphView nodes={snapshotLocks.nodes.length > 0 ? snapshotLocks.nodes : undefined} edges={snapshotLocks.edges.length > 0 ? snapshotLocks.edges : undefined} />
+        return <LockGraphView nodes={snapshotLocks.nodes.length > 0 ? snapshotLocks.nodes : undefined} edges={snapshotLocks.edges.length > 0 ? snapshotLocks.edges : undefined} onGoBack={() => setCurrentView('node_home')} />
       case 'memory':
-        return <MemoryStructView snapshotBackends={snapshotBackends} />
+        return <MemoryStructView snapshotBackends={snapshotBackends} onGoBack={() => setCurrentView('node_home')} />
       case 'plan':
-        return <PlanTreeView />
+        return <PlanTreeView onGoBack={() => setCurrentView('node_home')} />
       default:
         return (
           <NodeHomeView
@@ -784,6 +802,7 @@ function App() {
               if (!selectedClusterId) return
               updateClusterNode(selectedClusterId, nodeId, patch)
             }}
+            onGoBack={() => setCurrentView('cluster_home')}
           />
         )
     }

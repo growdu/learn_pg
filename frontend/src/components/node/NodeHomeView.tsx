@@ -9,6 +9,7 @@ interface NodeHomeViewProps {
   selectedNodeConfig: { id: string; name: string; role: string; cluster_type: string; source?: string } | null
   nodeStatuses: ClusterNodeStatus[]
   onUpdateNode: (nodeId: string, patch: { name?: string; host?: string; port?: number; user?: string; password?: string; database?: string; role?: string }) => void
+  onGoBack?: () => void
 }
 
 const modules: { view: View; title: string; desc: string; iconPath: string }[] = [
@@ -31,6 +32,7 @@ export default function NodeHomeView({
   selectedNodeConfig,
   nodeStatuses,
   onUpdateNode,
+  onGoBack,
 }: NodeHomeViewProps) {
   const connected = usePGStore((s) => s.connected)
   const version = usePGStore((s) => s.version)
@@ -81,9 +83,15 @@ export default function NodeHomeView({
     <div className="page-container">
       {/* Header */}
       <div className="page-header">
-        <div>
-          <h2 className="section-title" style={{ margin: 0 }}>{selectedNodeConfig?.name ?? '节点总览'}</h2>
-          <p className="section-subtitle">{nodeLabel}</p>
+        <div className="flex items-center gap-md">
+          <button className="btn btn-ghost btn-sm" onClick={() => onGoBack ? onGoBack() : onNavigate('cluster_home')}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6" /></svg>
+            返回集群
+          </button>
+          <div>
+            <h2 className="section-title" style={{ margin: 0 }}>{selectedNodeConfig?.name ?? '节点总览'}</h2>
+            <p className="section-subtitle">{nodeLabel}</p>
+          </div>
         </div>
         {!isEditing && selectedNodeConfig && (
           <button className="btn" onClick={startEdit}>编辑节点</button>
@@ -115,7 +123,7 @@ export default function NodeHomeView({
             </svg>
           </div>
           <div className="stat-card-content">
-            <div className="stat-card-value">{version || '-'}</div>
+            <div className={`stat-card-value ${(version?.length ?? 0) > 20 ? 'version-long' : ''}`}>{version || '-'}</div>
             <div className="stat-card-label">版本</div>
           </div>
         </div>
@@ -159,7 +167,7 @@ export default function NodeHomeView({
             </svg>
           </div>
           <div className="stat-card-content">
-            <div className="stat-card-value" style={{ fontSize: '0.875rem' }}>{nodeStatus?.current_lsn ?? '-'}</div>
+            <div className="stat-card-value" style={{ fontSize: '0.875rem', wordBreak: 'break-all' }}>{nodeStatus?.current_lsn ?? '-'}</div>
             <div className="stat-card-label">当前 LSN</div>
           </div>
         </div>

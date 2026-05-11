@@ -15,8 +15,9 @@ export interface PipelineStage {
 }
 
 interface PipelineViewProps {
-  type?: 'write' | 'read' | 'transaction'
+  type: 'write' | 'read' | 'transaction'
   stages?: PipelineStage[]
+  onGoBack?: () => void
 }
 
 const TITLES: Record<'write' | 'read' | 'transaction', string> = {
@@ -78,7 +79,7 @@ function PipelineGantt({ stages }: { stages: PipelineStage[] }) {
   )
 }
 
-export default function PipelineView({ type = 'write', stages }: PipelineViewProps) {
+export default function PipelineView({ type, stages, onGoBack }: PipelineViewProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [selectedStage, setSelectedStage] = useState<PipelineStage | null>(null)
@@ -147,6 +148,7 @@ export default function PipelineView({ type = 'write', stages }: PipelineViewPro
         source="collector 事件流 / useVisualizationData"
         updatedAtText={new Date().toLocaleTimeString('zh-CN', { hour12: false })}
         rightSlot={rightSlot}
+        onBack={onGoBack}
       />
 
       {displayStages.length === 0 && (

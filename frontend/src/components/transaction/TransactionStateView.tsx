@@ -23,9 +23,10 @@ const STATE_ORDER: TransactionState['state'][] = ['idle', 'started', 'in_progres
 
 export interface TransactionStateViewProps {
   transactions?: TransactionState[]
+  onGoBack?: () => void
 }
 
-export default function TransactionStateView({ transactions }: TransactionStateViewProps) {
+export default function TransactionStateView({ transactions, onGoBack }: TransactionStateViewProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [viewMode, setViewMode] = useState<'fsm' | 'table'>('fsm')
@@ -143,11 +144,12 @@ export default function TransactionStateView({ transactions }: TransactionStateV
                   fontSize: '0.75rem',
                 }}
               >
-                {mode === 'fsm' ? '状态图' : '事务列表'}
+                {mode === 'fsm' ? '状态图' : '表格'}
               </button>
             ))}
           </div>
         }
+        onBack={onGoBack}
       />
 
       {data.length === 0 && (

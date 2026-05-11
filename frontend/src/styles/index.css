@@ -1788,6 +1788,7 @@ body {
   align-items: center;
   gap: 0.875rem;
   transition: all var(--transition-fast);
+  min-width: 0;
 }
 
 .stat-card:hover {
@@ -1816,12 +1817,23 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.125rem;
+  min-width: 0;
 }
 
 .stat-card-value {
   font-size: 1.5rem;
   font-weight: 700;
   line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Version card — allow multi-line wrap for long version strings */
+.stat-card:has(.version-long) .stat-card-value {
+  font-size: 0.875rem;
+  white-space: normal;
+  word-break: break-all;
 }
 
 .stat-card-label {

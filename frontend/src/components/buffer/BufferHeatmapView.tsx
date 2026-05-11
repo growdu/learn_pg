@@ -12,6 +12,7 @@ export interface BufferCell {
 
 interface BufferHeatmapViewProps {
   buffers?: BufferCell[]
+  onGoBack?: () => void
 }
 
 function computeStats(data: BufferCell[]) {
@@ -55,7 +56,7 @@ function HitCountSparkline({ data }: { data: BufferCell[] }) {
   return <svg ref={svgRef} width={W} height={H} style={{ display: 'block' }} />
 }
 
-export default function BufferHeatmapView({ buffers }: BufferHeatmapViewProps) {
+export default function BufferHeatmapView({ buffers, onGoBack }: BufferHeatmapViewProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [hovered, setHovered] = useState<BufferCell | null>(null)
@@ -106,7 +107,7 @@ export default function BufferHeatmapView({ buffers }: BufferHeatmapViewProps) {
   if (data.length === 0) {
     return (
       <div style={{ padding: '1.5rem' }}>
-        <NodePageHeader title="Buffer Pool 热图" source="buffer_pin 事件流" updatedAtText={new Date().toLocaleTimeString('zh-CN', { hour12: false })} rightSlot={headerRight} />
+        <NodePageHeader title="Buffer Pool 热图" source="buffer_pin 事件流" updatedAtText={new Date().toLocaleTimeString('zh-CN', { hour12: false })} rightSlot={headerRight} onBack={onGoBack} />
         <div style={{ padding: '1rem', border: '1px solid var(--border)', borderRadius: '8px', background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}>
           暂无真实 Buffer 数据。请先激活节点并产生 `buffer_pin` / 相关采样数据。
         </div>
@@ -116,7 +117,7 @@ export default function BufferHeatmapView({ buffers }: BufferHeatmapViewProps) {
 
   return (
     <div style={{ padding: '1.5rem' }}>
-      <NodePageHeader title="Buffer Pool 热图" source="buffer_pin 事件流" updatedAtText={new Date().toLocaleTimeString('zh-CN', { hour12: false })} rightSlot={headerRight} />
+      <NodePageHeader title="Buffer Pool 热图" source="buffer_pin 事件流" updatedAtText={new Date().toLocaleTimeString('zh-CN', { hour12: false })} rightSlot={headerRight} onBack={onGoBack} />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '0.75rem', marginBottom: '1rem' }}>
         {[

@@ -3,7 +3,11 @@ import NodePageHeader from '../common/NodePageHeader'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 
-export default function WALViewer() {
+interface WALViewerProps {
+  onGoBack?: () => void
+}
+
+export default function WALViewer({ onGoBack }: WALViewerProps) {
   const [records, setRecords] = useState<Record<string, unknown>[]>([])
   const [loading, setLoading] = useState(false)
   const [lsn, setLsn] = useState('')
@@ -26,7 +30,7 @@ export default function WALViewer() {
 
   return (
     <div style={{ padding: '1.5rem' }}>
-      <NodePageHeader title="WAL 记录查看" source="/api/wal" updatedAtText={new Date().toLocaleTimeString('zh-CN', { hour12: false })} />
+      <NodePageHeader title="WAL 记录查看" source="/api/wal" updatedAtText={new Date().toLocaleTimeString('zh-CN', { hour12: false })} onBack={onGoBack} />
 
       <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem', alignItems: 'center' }}>
         <input

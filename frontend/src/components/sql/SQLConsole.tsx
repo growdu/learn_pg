@@ -26,7 +26,11 @@ function normalizeResponse(raw: ExecuteResponse): ExecuteResponse {
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 
-export default function SQLConsole() {
+interface SQLConsoleProps {
+  onGoBack?: () => void
+}
+
+export default function SQLConsole({ onGoBack }: SQLConsoleProps) {
   const { connected, config } = usePGStore()
   const [sql, setSql] = useState('SELECT 1;')
   const [output, setOutput] = useState('')
@@ -65,7 +69,7 @@ export default function SQLConsole() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1.5rem' }}>
-      <NodePageHeader title="SQL 控制台" source="/api/execute" updatedAtText={new Date().toLocaleTimeString('zh-CN', { hour12: false })} />
+      <NodePageHeader title="SQL 控制台" source="/api/execute" updatedAtText={new Date().toLocaleTimeString('zh-CN', { hour12: false })} onBack={onGoBack} />
 
       <div style={{ padding: '0.5rem 1rem', background: connected ? 'var(--green)' : 'var(--bg-tertiary)', color: 'white', borderRadius: '6px', fontSize: '0.8rem', fontFamily: 'Consolas, monospace' }}>
         {connected ? `已连接: ${config.host}:${config.port}/${config.database}` : '未连接节点'}

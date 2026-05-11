@@ -18,6 +18,9 @@ collector/target/
 src-tauri/target/
 src-tauri/cargo-tauri/
 
+# PostgreSQL 源码（用于 eBPF probe 编译参考，勿提交）
+postgres/
+
 # IDE
 .vscode/
 .idea/
@@ -42,3 +45,4 @@ coverage/
 # Misc
 *.log.obsidian/
 .obsidian/
+backend/data/workspace_projects.json

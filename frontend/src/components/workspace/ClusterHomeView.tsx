@@ -17,6 +17,7 @@ interface Props {
   onNavigate: (view: View) => void
   onReloadWorkspace: () => Promise<boolean>
   onActivateNode: (clusterId: string, nodeId: string) => void
+  onNodeDoubleClick: (node: ClusterNodeConfig) => void
 }
 
 interface OverviewState {
@@ -123,6 +124,8 @@ export default function ClusterHomeView(props: Props) {
   }
 
   const handleNodeDoubleClick = (node: ClusterNodeConfig) => {
+    if (!cluster) return
+    props.onActivateNode(cluster.id, node.id)
     void activateNode(node, 'node_home')
   }
 
@@ -507,6 +510,7 @@ export default function ClusterHomeView(props: Props) {
                         selectedNodeId={selectedNodeId}
                         onEdgeClick={(key) => { setSelectedEdgeKey(key); setSelectedNodeId(''); }}
                         onNodeClick={(nodeId) => { setSelectedNodeId(nodeId); setSelectedEdgeKey(''); }}
+                        onNodeDoubleClick={(node) => handleNodeDoubleClick(node)}
                       />
                       {selectedEdgeDetail && (
                         <div className="edge-info">
@@ -740,6 +744,7 @@ function TopologyMap({
   selectedNodeId,
   onEdgeClick,
   onNodeClick,
+  onNodeDoubleClick,
 }: {
   nodes: WorkspaceProject['clusters'][number]['nodes']
   statuses: ClusterNodeStatus[]
@@ -748,6 +753,7 @@ function TopologyMap({
   selectedNodeId: string
   onEdgeClick: (key: string) => void
   onNodeClick: (nodeId: string) => void
+  onNodeDoubleClick: (node: WorkspaceProject['clusters'][number]['nodes'][number]) => void
 }) {
   const width = 700, height = 180, y = 90, nodeWidth = 120, nodeHeight = 48
   const gap = nodes.length <= 1 ? 0 : (width - 80 - nodeWidth) / Math.max(1, nodes.length - 1)
@@ -776,7 +782,7 @@ function TopologyMap({
       {positions.map((p) => {
         const ok = p.status?.connected ?? false, active = selectedNodeId === p.id
         return (
-          <g key={p.id} onClick={() => onNodeClick(p.id)} style={{ cursor: 'pointer' }}>
+          <g key={p.id} onClick={() => onNodeClick(p.id)} onDoubleClick={() => onNodeDoubleClick(p.node)} style={{ cursor: 'pointer' }}>
             <rect x={p.x} y={p.y} width={nodeWidth} height={nodeHeight} rx={8}
               fill={ok ? 'rgba(34,197,94,0.12)' : 'rgba(248,81,73,0.1)'}
               stroke={active ? '#60a5fa' : ok ? '#22c55e' : '#f87171'}

@@ -14,6 +14,7 @@ interface SnapshotBackend {
 
 interface MemoryStructViewProps {
   snapshotBackends?: SnapshotBackend[]
+  onGoBack?: () => void
 }
 
 interface PGProcEntry {
@@ -164,7 +165,7 @@ function StateBadge({ state }: { state: PGProcEntry['state'] }) {
   return <span style={{ color, fontWeight: 600 }}>{state}</span>
 }
 
-export default function MemoryStructView({ snapshotBackends }: MemoryStructViewProps) {
+export default function MemoryStructView({ snapshotBackends, onGoBack }: MemoryStructViewProps) {
   const events = useEventStore((s) => s.events)
   const [tab, setTab] = useState<'pgproc' | 'pgxact' | 'buffer'>('pgproc')
 
@@ -186,6 +187,7 @@ export default function MemoryStructView({ snapshotBackends }: MemoryStructViewP
         source="/api/snapshot + xact_state/buffer_pin 事件"
         updatedAtText={new Date().toLocaleTimeString('zh-CN', { hour12: false })}
         rightSlot={<span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{events.length} events</span>}
+        onBack={onGoBack}
       />
 
       {!hasData && (

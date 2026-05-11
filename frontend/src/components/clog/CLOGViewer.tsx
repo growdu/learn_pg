@@ -17,7 +17,11 @@ const STATUS_LABELS: Record<string, string> = {
   subtrans: '子事务',
 }
 
-export default function CLOGViewer() {
+interface CLOGViewerProps {
+  onGoBack?: () => void
+}
+
+export default function CLOGViewer({ onGoBack }: CLOGViewerProps) {
   const [stats, setStats] = useState({ in_progress: 0, committed: 0, aborted: 0, subtrans: 0, total: 0 })
   const [loading, setLoading] = useState(false)
   const [transactions, setTransactions] = useState<{ xid: number; status: string }[]>([])
@@ -55,7 +59,7 @@ export default function CLOGViewer() {
 
   return (
     <div style={{ padding: '1.5rem' }}>
-      <NodePageHeader title="CLOG 事务状态" source="/api/clog" updatedAtText={new Date().toLocaleTimeString('zh-CN', { hour12: false })} />
+      <NodePageHeader title="CLOG 事务状态" source="/api/clog" updatedAtText={new Date().toLocaleTimeString('zh-CN', { hour12: false })} onBack={onGoBack} />
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem', marginBottom: '1rem' }}>
         {Object.entries(STATUS_LABELS).map(([key, label]) => {
