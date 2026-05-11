@@ -47,6 +47,8 @@ export interface ClusterNodeStatus {
   error?: string
   version?: string
   in_recovery: boolean
+  connectionStatus: 'unknown' | 'connecting' | 'ready' | 'failed'
+  lastError?: string
   current_lsn?: string
   replay_lsn?: string
   wal_receiver_status?: string

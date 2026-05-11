@@ -15,6 +15,12 @@ export interface WorkspaceCluster {
   nodes: ClusterNodeConfig[]
 }
 
+export interface WorkspaceNode {
+  connectionStatus?: 'unknown' | 'connecting' | 'ready' | 'failed'
+  hostId?: string
+  lastError?: string
+}
+
 export interface WorkspaceComponent {
   id: string
   name: string
