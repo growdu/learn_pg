@@ -74,28 +74,15 @@ export default function ClusterHomeView(props: Props) {
   const alertThresholdSec = cluster?.alertThresholdSec ?? 30
   const alertThresholdBytes = alertThresholdSec * 1024 * 1024
 
-  const requestNodes = useMemo(() => {
-    if (!props.project) return []
-    return props.project.clusters.flatMap((c) =>
-      c.nodes.map((n) => ({
-        id: n.id, name: n.name, host: n.host, port: n.port, user: n.user, database: n.database,
-        cluster_type: c.replicationType, role: n.role,
-      })),
-    )
-  }, [props.project])
-
   useEffect(() => {
     let stop = false
     const loadOverview = async () => {
-      if (!props.project || requestNodes.length === 0) {
+      if (!props.project || !cluster) {
         if (!stop) setOverview({ loading: false, error: '', nodes: [], timestamp: 0 })
         return
       }
       try {
-        const res = await fetch('/api/cluster/overview', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ nodes: requestNodes }),
-        })
+        const res = await fetch(`/api/cluster/${cluster.id}/overview`)
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data = (await res.json()) as ClusterOverviewResponse
         if (!data.success) throw new Error(data.error || '获取集群状态失败')
@@ -107,7 +94,7 @@ export default function ClusterHomeView(props: Props) {
     loadOverview()
     const timer = window.setInterval(loadOverview, 5000)
     return () => { stop = true; window.clearInterval(timer) }
-  }, [props.project, requestNodes])
+  }, [props.project, cluster])
 
   const activateNode = async (node: ClusterNodeConfig, view: View) => {
     const res = await fetch(`/api/nodes/${node.id}/activate`, { method: 'POST' })
