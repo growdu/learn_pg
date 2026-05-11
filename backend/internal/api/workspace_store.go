@@ -16,19 +16,22 @@ const currentWorkspaceSchemaVersion = 1
 const maskedPassword = "********"
 
 type workspaceNode struct {
-	ID           string                 `json:"id"`
-	Name         string                 `json:"name"`
-	Host         string                 `json:"host"`
-	Port         int                    `json:"port"`
-	User         string                 `json:"user"`
-	Password     string                 `json:"password"`
-	Database     string                 `json:"database"`
-	ClusterType  string                 `json:"cluster_type"`
-	Role         string                 `json:"role"`
-	Source       string                 `json:"source,omitempty"`
-	DSN          string                 `json:"dsn,omitempty"`
-	InstanceMeta *workspaceInstanceMeta `json:"instanceMeta,omitempty"`
-	SSHHint      *workspaceSSHHint      `json:"sshHint,omitempty"`
+	ID                string                 `json:"id"`
+	Name              string                 `json:"name"`
+	Host              string                 `json:"host"`
+	Port              int                    `json:"port"`
+	User              string                 `json:"user"`
+	Password          string                 `json:"password"`
+	Database          string                 `json:"database"`
+	ClusterType       string                 `json:"cluster_type"`
+	Role              string                 `json:"role"`
+	Source            string                 `json:"source,omitempty"`
+	DSN               string                 `json:"dsn,omitempty"`
+	InstanceMeta      *workspaceInstanceMeta `json:"instanceMeta,omitempty"`
+	SSHHint           *workspaceSSHHint      `json:"sshHint,omitempty"`
+	ConnectionStatus  string                 `json:"connectionStatus,omitempty"`
+	LastError         string                 `json:"lastError,omitempty"`
+	HostId            string                 `json:"hostId,omitempty"`
 }
 
 type workspaceCluster struct {
@@ -439,6 +442,28 @@ func (s *workspaceStore) UpdateNodeLocked(projectID, clusterID, nodeID string, p
 		return fmt.Errorf("cluster not found: %s", clusterID)
 	}
 	return fmt.Errorf("project not found: %s", projectID)
+}
+
+// UpdateNodeStatus updates connection status and last error for a node.
+func (s *workspaceStore) UpdateNodeStatus(nodeId string, status string, lastError string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	env, err := s.readEnvelopeNoLock()
+	if err != nil {
+		return err
+	}
+	for pi := range env.Projects {
+		for ci := range env.Projects[pi].Clusters {
+			for ni := range env.Projects[pi].Clusters[ci].Nodes {
+				if env.Projects[pi].Clusters[ci].Nodes[ni].ID == nodeId {
+					env.Projects[pi].Clusters[ci].Nodes[ni].ConnectionStatus = status
+					env.Projects[pi].Clusters[ci].Nodes[ni].LastError = lastError
+					return s.writeEnvelopeLocked(env)
+				}
+			}
+		}
+	}
+	return fmt.Errorf("node not found: %s", nodeId)
 }
 
 // DeleteNodeLocked deletes node from cluster.
