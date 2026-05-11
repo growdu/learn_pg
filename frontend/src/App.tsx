@@ -42,25 +42,9 @@ export type View =
   | 'memory'
   | 'plan'
 
-const STORAGE_KEY = 'pgv_workspace_projects'
 const TASK_STORAGE_KEY = 'pgv_provision_task'
 const WORKSPACE_SCHEMA_VERSION = 1
 const genId = () => crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)
-
-function loadProjects(): WorkspaceProject[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as WorkspaceProject[]
-    return Array.isArray(parsed) ? migrateWorkspaceProjects(parsed, 0) : []
-  } catch {
-    return []
-  }
-}
-
-function saveProjects(projects: WorkspaceProject[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(projects))
-}
 
 function loadProvisionTaskCache(): { taskId: string; status: string; progress: number; message: string; startedAt?: number; finishedAt?: number } | null {
   try {
@@ -222,7 +206,7 @@ function App() {
   const [currentView, setCurrentView] = useState<View>('project_home')
   const [connected, setConnected] = useState(false)
   const [pgVersion, setPgVersion] = useState('')
-  const [projects, setProjects] = useState<WorkspaceProject[]>(() => loadProjects())
+  const [projects, setProjects] = useState<WorkspaceProject[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState('')
   const [selectedClusterId, setSelectedClusterId] = useState('')
   const [selectedNodeId, setSelectedNodeId] = useState('')
@@ -284,7 +268,6 @@ function App() {
 
   useEffect(() => {
     if (!workspaceBootstrapped) return
-    saveProjects(projects)
     const t = window.setTimeout(() => {
       void (async () => {
         const ok = await saveProjectsToBackend(projects)
