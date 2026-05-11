@@ -46,3 +46,4 @@ coverage/
 *.log.obsidian/
 .obsidian/
 backend/data/workspace_projects.json
+backend/pgv-server
