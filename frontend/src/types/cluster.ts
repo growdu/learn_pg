@@ -6,7 +6,6 @@ export interface ClusterNodeConfig {
   host: string
   port: number
   user: string
-  password: string
   database: string
   cluster_type: ClusterType
   role: string

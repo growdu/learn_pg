@@ -56,7 +56,6 @@ export default function ClusterHomeView(props: Props) {
   const [dsnLoading, setDsnLoading] = useState(false)
   const [dsnMessage, setDsnMessage] = useState('')
   const [importUser, setImportUser] = useState('postgres')
-  const [importPassword, setImportPassword] = useState('')
   const [importDatabase, setImportDatabase] = useState('postgres')
   const [autoConnectAfterImport, setAutoConnectAfterImport] = useState(false)
   const [highlightNodeId, setHighlightNodeId] = useState('')
@@ -65,7 +64,7 @@ export default function ClusterHomeView(props: Props) {
   const [editingClusterName, setEditingClusterName] = useState('')
   const [editingClusterThreshold, setEditingClusterThreshold] = useState(30)
   const [editingNodeId, setEditingNodeId] = useState('')
-  const [editingNodeData, setEditingNodeData] = useState({ name: '', host: '', port: 5432, user: '', password: '', database: '', role: 'standby' })
+  const [editingNodeData, setEditingNodeData] = useState({ name: '', host: '', port: 5432, user: '', database: '', role: 'standby' })
 
   const cluster = useMemo(
     () => props.project?.clusters.find((c) => c.id === props.selectedClusterId) ?? props.project?.clusters[0],
@@ -79,7 +78,7 @@ export default function ClusterHomeView(props: Props) {
     if (!props.project) return []
     return props.project.clusters.flatMap((c) =>
       c.nodes.map((n) => ({
-        id: n.id, name: n.name, host: n.host, port: n.port, user: n.user, password: n.password, database: n.database,
+        id: n.id, name: n.name, host: n.host, port: n.port, user: n.user, database: n.database,
         cluster_type: c.replicationType, role: n.role,
       })),
     )
@@ -113,11 +112,11 @@ export default function ClusterHomeView(props: Props) {
   const activateNode = async (node: ClusterNodeConfig, view: View) => {
     const res = await fetch('/api/connect', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ host: node.host, port: node.port, user: node.user, password: node.password, database: node.database }),
+      body: JSON.stringify({ host: node.host, port: node.port, user: node.user, database: node.database }),
     })
     const data = await res.json()
     if (!data.success) return
-    setConfig({ host: node.host, port: node.port, user: node.user, password: node.password, database: node.database })
+    setConfig({ host: node.host, port: node.port, user: node.user, database: node.database })
     setConnected(true)
     setVersion(data.version || '')
     props.onNavigate(view)
@@ -149,7 +148,7 @@ export default function ClusterHomeView(props: Props) {
 
   const startEditNode = (node: ClusterNodeConfig) => {
     setEditingNodeId(node.id)
-    setEditingNodeData({ name: node.name, host: node.host, port: node.port, user: node.user, password: node.password, database: node.database, role: node.role })
+    setEditingNodeData({ name: node.name, host: node.host, port: node.port, user: node.user, database: node.database, role: node.role })
   }
 
   const saveEditNode = () => {
@@ -191,7 +190,7 @@ export default function ClusterHomeView(props: Props) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           projectId: props.project.id, clusterId: cluster.id, instance,
-          autoConnect: autoConnectAfterImport, user: importUser, password: importPassword, database: importDatabase,
+          autoConnect: autoConnectAfterImport, user: importUser, database: importDatabase,
         }),
       })
       const data = (await res.json()) as { success?: boolean; error?: string; nodeId?: string }
@@ -573,10 +572,6 @@ export default function ClusterHomeView(props: Props) {
                                     <label className="input-label">用户</label>
                                     <input className="input" value={editingNodeData.user} onChange={(e) => setEditingNodeData({ ...editingNodeData, user: e.target.value })} />
                                   </div>
-                                  <div className="input-group" style={{ flex: 1 }}>
-                                    <label className="input-label">密码</label>
-                                    <input className="input" type="password" value={editingNodeData.password} onChange={(e) => setEditingNodeData({ ...editingNodeData, password: e.target.value })} />
-                                  </div>
                                 </div>
                                 <div className="input-row">
                                   <div className="input-group" style={{ flex: 1 }}>
@@ -665,7 +660,6 @@ export default function ClusterHomeView(props: Props) {
                         <div className="add-option-form">
                           <div className="form-row">
                             <input className="input" value={importUser} onChange={(e) => setImportUser(e.target.value)} placeholder="用户名" />
-                            <input className="input" type="password" value={importPassword} onChange={(e) => setImportPassword(e.target.value)} placeholder="密码" />
                             <input className="input" value={importDatabase} onChange={(e) => setImportDatabase(e.target.value)} placeholder="数据库" />
                           </div>
                           <div className="form-row">

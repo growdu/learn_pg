@@ -4,7 +4,6 @@ export interface PGConfig {
   host: string
   port: number
   user: string
-  password: string
   database: string
 }
 
@@ -27,7 +26,6 @@ export const usePGStore = create<PGState>((set) => ({
     host: 'pgv-postgres',
     port: 5432,
     user: 'postgres',
-    password: 'postgres',
     database: 'postgres',
   },
   setConnected: (v) => set({ connected: v }),

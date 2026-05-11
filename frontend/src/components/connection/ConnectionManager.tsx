@@ -29,7 +29,7 @@ export default function ConnectionManager({ onConnect, onVersion }: Props) {
   useEffect(() => {
     if (connected) {
       const cfg = usePGStore.getState().config
-      setActiveProfile({ id: 'current', name: 'Current', ...cfg })
+      setActiveProfile({ id: 'current', name: 'Current', password: '', ...cfg })
     }
   }, [connected, setActiveProfile])
 
@@ -44,7 +44,6 @@ export default function ConnectionManager({ onConnect, onVersion }: Props) {
           host: profile.host,
           port: profile.port,
           user: profile.user,
-          password: profile.password,
           database: profile.database,
         }),
       })
@@ -54,7 +53,6 @@ export default function ConnectionManager({ onConnect, onVersion }: Props) {
           host: profile.host,
           port: profile.port,
           user: profile.user,
-          password: profile.password,
           database: profile.database,
         }
         setConfig(cfg)

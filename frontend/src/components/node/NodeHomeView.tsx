@@ -55,7 +55,7 @@ export default function NodeHomeView({
     setEditHost(config.host)
     setEditPort(config.port)
     setEditUser(config.user)
-    setEditPassword(config.password)
+    setEditPassword('')
     setEditDatabase(config.database)
     setEditRole(selectedNodeConfig.role)
     setIsEditing(true)

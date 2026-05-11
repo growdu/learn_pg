@@ -194,7 +194,6 @@ function makeDefaultNode(idx: number, role: ClusterNodeConfig['role'] = idx === 
     host: cfg.host,
     port: cfg.port,
     user: cfg.user,
-    password: cfg.password,
     database: cfg.database,
     cluster_type: role === 'publisher' || role === 'subscriber' ? 'logical' : 'physical',
     role,
@@ -702,11 +701,11 @@ function App() {
               void (async () => {
                 const res = await fetch('/api/connect', {
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ host: node.host, port: node.port, user: node.user, password: node.password, database: node.database }),
+                  body: JSON.stringify({ host: node.host, port: node.port, user: node.user, database: node.database }),
                 })
                 const data = await res.json()
                 if (!data.success) return
-                usePGStore.getState().setConfig({ host: node.host, port: node.port, user: node.user, password: node.password, database: node.database })
+                usePGStore.getState().setConfig({ host: node.host, port: node.port, user: node.user, database: node.database })
                 usePGStore.getState().setConnected(true)
                 usePGStore.getState().setVersion(data.version || '')
                 setCurrentView('node_home')
