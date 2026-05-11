@@ -12,6 +12,7 @@ import (
 
 	"pg-visualizer-backend/internal/api"
 	"pg-visualizer-backend/internal/config"
+	"pg-visualizer-backend/internal/connection"
 	"pg-visualizer-backend/internal/middleware"
 	"pg-visualizer-backend/internal/pg"
 	"pg-visualizer-backend/internal/ws"
@@ -36,8 +37,12 @@ func main() {
 	go hub.Run()
 	slog.Info("WebSocket Hub started")
 
+	// Create connection manager
+	connMgr := connection.NewManager(cfg)
+
 	// Create API handler
 	handler := api.NewHandler(cfg, hub)
+	handler.SetConnMgr(connMgr)
 
 	// Auto-connect to PostgreSQL on startup
 	if cfg.PGHost != "" {

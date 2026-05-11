@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"pg-visualizer-backend/internal/connection"
 	"pg-visualizer-backend/internal/config"
 	"pg-visualizer-backend/internal/middleware"
 	"pg-visualizer-backend/internal/pg"
@@ -27,6 +28,7 @@ type Handler struct {
 	config    *config.Config
 	pgClient  *pg.Client
 	hub       *ws.Hub
+	connMgr   *connection.Manager
 	workspace *workspaceStore
 	taskMu    sync.Mutex
 	tasks     map[string]provisionTask
@@ -57,6 +59,11 @@ func defaultProvisionTaskFilePath() string {
 // SetPGClient sets the PostgreSQL client
 func (h *Handler) SetPGClient(client *pg.Client) {
 	h.pgClient = client
+}
+
+// SetConnMgr sets the connection manager
+func (h *Handler) SetConnMgr(mgr *connection.Manager) {
+	h.connMgr = mgr
 }
 
 // ─── Error response ─────────────────────────────────────────────────────────
