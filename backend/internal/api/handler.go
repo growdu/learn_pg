@@ -436,7 +436,67 @@ func (h *Handler) ServeWorkspaceProjectByID(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, r, http.StatusOK, map[string]any{"success": true})
 }
 
+// ServeClusterOverview handles GET /api/cluster/{clusterId}/overview — inspects all nodes in a cluster from the workspace store.
 func (h *Handler) ServeClusterOverview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, r, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	clusterID := extractClusterIDFromPath(r.URL.Path)
+	if clusterID == "" {
+		h.writeError(w, r, http.StatusBadRequest, "cluster id required")
+		return
+	}
+
+	projects, _, err := h.workspace.readSnapshot()
+	if err != nil {
+		h.writeError(w, r, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var cluster *workspaceCluster
+	for pi := range projects {
+		for ci := range projects[pi].Clusters {
+			if projects[pi].Clusters[ci].ID == clusterID {
+				cluster = &projects[pi].Clusters[ci]
+				break
+			}
+		}
+	}
+	if cluster == nil {
+		h.writeError(w, r, http.StatusNotFound, "cluster not found")
+		return
+	}
+
+	resp := clusterOverviewResponse{
+		Success:   true,
+		Timestamp: time.Now().Unix(),
+		Nodes:     make([]clusterNodeStatus, 0, len(cluster.Nodes)),
+	}
+
+	for i, node := range cluster.Nodes {
+		status := h.inspectNodeByID(node.ID)
+		if status.ID == "" {
+			status.ID = fmt.Sprintf("node-%d", i+1)
+		}
+		resp.Nodes = append(resp.Nodes, status)
+		resp.Summary.TotalNodes++
+		if status.Connected {
+			resp.Summary.ConnectedNodes++
+		}
+		if strings.EqualFold(status.ClusterType, "physical") {
+			resp.Summary.PhysicalNodes++
+		}
+		if strings.EqualFold(status.ClusterType, "logical") {
+			resp.Summary.LogicalNodes++
+		}
+	}
+
+	writeJSON(w, r, http.StatusOK, resp)
+}
+
+// ServeClusterOverviewLegacy handles POST /api/cluster/overview — inspects nodes passed in request body (legacy interface).
+func (h *Handler) ServeClusterOverviewLegacy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.writeError(w, r, http.StatusMethodNotAllowed, "POST required")
 		return
@@ -1074,7 +1134,18 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	mux.HandleFunc("/api/projects", h.ServeProjectList)
 	mux.HandleFunc("/api/projects/", h.ServeProjectByID)
 	mux.HandleFunc("/api/clusters/", h.ServeClusterByID)
-	mux.HandleFunc("/api/cluster/overview", h.ServeClusterOverview)
+	// Cluster overview: GET /api/cluster/{id}/overview (new) and POST /api/cluster/overview (legacy)
+	mux.HandleFunc("/api/cluster/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/overview") {
+			h.ServeClusterOverview(w, r)
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/cluster/overview" {
+			h.ServeClusterOverviewLegacy(w, r)
+			return
+		}
+		h.writeError(w, r, http.StatusNotFound, "not found")
+	})
 	mux.HandleFunc("/api/cluster/node/inspect", h.ServeClusterNodeInspect)
 	mux.HandleFunc("/api/wal", h.ServeWAL)
 	mux.HandleFunc("/api/wal/segments", h.ServeWALSegments)
@@ -1268,4 +1339,157 @@ func isHexSegmentName(filename string) bool {
 		}
 	}
 	return true
+}
+
+// extractClusterIDFromPath extracts the cluster ID from a path like /api/cluster/{id}/overview.
+func extractClusterIDFromPath(path string) string {
+	parts := strings.TrimPrefix(path, "/api/cluster/")
+	i := strings.Index(parts, "/")
+	if i >= 0 {
+		return parts[:i]
+	}
+	return strings.TrimSpace(parts)
+}
+
+// inspectNodeByID looks up a node in the workspace store by node ID and returns its status.
+func (h *Handler) inspectNodeByID(nodeID string) clusterNodeStatus {
+	projects, _, _ := h.workspace.readSnapshot()
+	var node workspaceNode
+	for pi := range projects {
+		for ci := range projects[pi].Clusters {
+			for ni := range projects[pi].Clusters[ci].Nodes {
+				if projects[pi].Clusters[ci].Nodes[ni].ID == nodeID {
+					node = projects[pi].Clusters[ci].Nodes[ni]
+				}
+			}
+		}
+	}
+	if node.ID == "" {
+		return clusterNodeStatus{ID: nodeID, Error: "node not found in workspace"}
+	}
+
+	status := clusterNodeStatus{
+		ID:          node.ID,
+		Name:        node.Name,
+		Host:        node.Host,
+		Port:        node.Port,
+		Database:    node.Database,
+		ClusterType: node.ClusterType,
+		Role:        node.Role,
+	}
+
+	// Try existing connection first
+	client, err := h.connMgr.Get(nodeID)
+	if err != nil {
+		// Register and activate
+		h.connMgr.Register(nodeID, connection.Config{
+			Host:     node.Host,
+			Port:     node.Port,
+			User:     node.User,
+			Password: node.Password,
+			Database: node.Database,
+		})
+		if err2 := h.connMgr.Activate(nodeID); err2 != nil {
+			status.Error = err.Error()
+			return status
+		}
+		client, _ = h.connMgr.Get(nodeID)
+	}
+
+	return h.inspectNodeClient(node, client)
+}
+
+// inspectNodeClient inspects a connected node using an already-established pg.Client.
+func (h *Handler) inspectNodeClient(node workspaceNode, client *pg.Client) clusterNodeStatus {
+	status := clusterNodeStatus{
+		ID:          node.ID,
+		Name:        node.Name,
+		Host:        node.Host,
+		Port:        node.Port,
+		Database:    node.Database,
+		ClusterType: node.ClusterType,
+		Role:        node.Role,
+	}
+	if client == nil {
+		return status
+	}
+
+	status.Connected = true
+	if version, err := client.GetVersion(); err == nil {
+		status.Version = version
+	}
+	if rec, err := querySingleText(client, "SELECT pg_is_in_recovery()::text AS v"); err == nil {
+		status.InRecovery = rec == "true"
+	}
+	if lsn, err := querySingleText(client, "SELECT pg_current_wal_lsn()::text AS v"); err == nil {
+		status.CurrentLSN = lsn
+	}
+	if replayLSN, err := querySingleText(client, "SELECT coalesce(pg_last_wal_replay_lsn()::text,'') AS v"); err == nil {
+		status.ReplayLSN = replayLSN
+	}
+	if wr, err := querySingleText(client, "SELECT coalesce(status,'') AS v FROM pg_stat_wal_receiver LIMIT 1"); err == nil {
+		status.WalReceiverStatus = wr
+	}
+
+	if rows, err := client.Execute(`
+		SELECT coalesce(application_name,'') AS application_name,
+		       coalesce(state,'') AS state,
+		       coalesce(sync_state,'') AS sync_state,
+		       coalesce(sent_lsn::text,'') AS sent_lsn,
+		       coalesce(write_lsn::text,'') AS write_lsn,
+		       coalesce(flush_lsn::text,'') AS flush_lsn,
+		       coalesce(replay_lsn::text,'') AS replay_lsn,
+		       coalesce(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)::bigint,0)::text AS lag_bytes,
+		       coalesce(write_lag::text,'') AS write_lag,
+		       coalesce(flush_lag::text,'') AS flush_lag,
+		       coalesce(replay_lag::text,'') AS replay_lag
+		FROM pg_stat_replication
+		ORDER BY application_name`); err == nil && rows != nil {
+		for _, row := range rows.Rows {
+			lag, _ := strconv.ParseInt(row["lag_bytes"], 10, 64)
+			status.PhysicalReplication = append(status.PhysicalReplication, replicationChannel{
+				Name:      row["application_name"],
+				State:     row["state"],
+				SyncState: row["sync_state"],
+				SentLSN:   row["sent_lsn"],
+				WriteLSN:  row["write_lsn"],
+				FlushLSN:  row["flush_lsn"],
+				ReplayLSN: row["replay_lsn"],
+				LagBytes:  lag,
+				WriteLag:  row["write_lag"],
+				FlushLag:  row["flush_lag"],
+				ReplayLag: row["replay_lag"],
+			})
+		}
+	}
+
+	if n, err := querySingleInt(client, "SELECT count(*) AS v FROM pg_replication_slots WHERE slot_type='logical'"); err == nil {
+		status.LogicalSlots = n
+	}
+	if n, err := querySingleInt(client, "SELECT count(*) AS v FROM pg_publication"); err == nil {
+		status.Publications = n
+	}
+	if rows, err := client.Execute(`
+		SELECT coalesce(s.subname,'') AS subname,
+		       coalesce(s.subenabled::text,'false') AS subenabled,
+		       coalesce(ss.worker_type,'') AS worker_type,
+		       coalesce(ss.received_lsn::text,'') AS received_lsn,
+		       coalesce(ss.latest_end_lsn::text,'') AS latest_end_lsn,
+		       coalesce(ss.latest_end_time::text,'') AS latest_end_time
+		FROM pg_subscription s
+		LEFT JOIN pg_stat_subscription ss ON s.oid = ss.subid
+		ORDER BY s.subname`); err == nil && rows != nil {
+		for _, row := range rows.Rows {
+			status.Subscriptions = append(status.Subscriptions, logicalSubscription{
+				Name:          row["subname"],
+				Enabled:       row["subenabled"] == "true",
+				WorkerType:    row["worker_type"],
+				ReceivedLSN:   row["received_lsn"],
+				LatestEndLSN:  row["latest_end_lsn"],
+				LatestEndTime: row["latest_end_time"],
+			})
+		}
+	}
+
+	return status
 }
