@@ -8,15 +8,17 @@ PostgreSQL 内核学习与可视化观测平台文档。
 
 | 文档 | 说明 |
 |------|------|
-| [design.md](./design.md) | 系统设计：信息架构、页面结构、API 设计 |
-| [plan.md](./plan.md) | 开发计划与里程碑（当前进度 M4） |
-| [apply.md](./apply.md) | 实现记录：Provisioning、Discovery API 契约 |
+| [need.md](./need.md) | 需求边界：前端只连后端，后端统一连接数据库与宿主机 |
+| [design.md](./design.md) | 系统设计：接入方式、后端职责、任务编排、接口建议 |
+| [apply.md](./apply.md) | 实施方案：当前差距、模块拆分、数据结构、落地顺序 |
+| [plan.md](./plan.md) | 新阶段开发计划：一键拉起与宿主机自动观测 |
+| [user-manual.md](./user-manual.md) | 用户手册：当前版本可用功能、使用步骤、限制说明 |
 | [FAQ.md](./FAQ.md) | 常见问题：Nginx 502、WebSocket、CLOG/WAL 故障排查 |
 | [findings.md](./findings.md) | 技术调研：eBPF 方案、PG Wire Protocol、踩坑记录 |
-| [planning.md](./planning.md) | 任务规划与进度日志（历史记录） |
+| [planning.md](./planning.md) | 历史任务规划与进度日志 |
 | [deploy.md](./deploy.md) | Docker Compose / K8s 部署指南 |
 | [manual-deploy.md](./manual-deploy.md) | Linux 手动部署指南（nginx + 后端 + PostgreSQL） |
-| [ops.md](./ops.md) | 运维手册：日志、监控、备份、扩缩容 |
+| [ops.md](./ops.md) | 运维手册：单用户本地工具的启动、备份、排障、升级 |
 
 ---
 
@@ -24,51 +26,44 @@ PostgreSQL 内核学习与可视化观测平台文档。
 
 **learn_pg** 是一个面向 PostgreSQL 内核学习与观测的可视化平台。
 
-### 核心能力
+### 当前架构口径
 
-1. **工作区管理** — 项目 → 集群 → 节点 → 组件分层结构
-2. **集群观测** — 物理复制 / 逻辑复制拓扑可视化，LSN 与 lag 指标
-3. **节点专题** — SQL、WAL、CLOG、Buffer 热图、锁等待图、事务状态、内存结构、执行计划树
+```text
+Browser -> Backend -> PostgreSQL / Host Machine / Collector
+```
+
+- 前端只通过 HTTP / WebSocket 调用后端。
+- 后端负责数据库连接、集群拉起、宿主机扫描、任务编排与状态汇总。
+- 数据库节点不应由浏览器直连。
+
+### 当前可用能力
+
+1. **工作区管理** — 项目 -> 集群 -> 节点 -> 组件分层结构
+2. **手动数据库接入** — 手动维护节点连接信息，由后端发起连接
+3. **集群观测** — 复制拓扑、LSN / lag 指标、节点专题页
 4. **实时事件流** — WebSocket 推送 + eBPF 采集（降级：日志解析）
 
-### 技术栈
+### 目标补齐能力
 
-- **前端**：React 18 + TypeScript + Vite + D3.js + Zustand
-- **后端**：Go + gorilla/websocket + 自实现 PG Wire Protocol
-- **采集器**：Rust + Aya eBPF 框架
-- **数据库**：PostgreSQL 18
-- **部署**：Docker Compose + nginx
+1. **一键拉起单机 PostgreSQL** — 点击按钮即可创建并进入观测
+2. **一键拉起主备复制集群** — 自动完成复制参数与拓扑建模
+3. **一键拉起逻辑复制集群** — 自动完成 publication / subscription 初始化
+4. **添加数据库宿主机** — 自动扫描 PostgreSQL 实例并导入观测
 
-### 开发里程碑
+### 当前实施重点
 
-| 里程碑 | 状态 | 说明 |
-|--------|------|------|
-| M1：复制链路指标细化 | ✅ 完成 | 物理/逻辑复制 LSN、lag 指标 |
-| M2：工作区后端持久化 | ✅ 完成 | 后端 API + 前端同步 |
-| M3：节点专题真实化 | ✅ 完成 | 锁图、事务、Buffer 等去除 demo 数据 |
-| M4：自动化回归与联调基线 | ⏳ 进行中 | E2E 测试、接口契约、联调脚本 |
+| 方向 | 现状 | 目标 |
+|------|------|------|
+| 数据库接入 | 仅手动添加数据库节点 | 支持一键拉起与自动接入 |
+| 主机接入 | 无稳定闭环 | 支持添加宿主机并自动扫描实例 |
+| 任务编排 | 仅有接口原型/任务条 | 提供真实任务执行、进度、回滚 |
+| 自动化测试 | 仅少量单测 | 建立 E2E、契约测试、联调脚本 |
 
----
+### 文档使用建议
 
-## 导航路径示例
-
-```
-项目主页
-  └─ 集群主页
-       ├─ 拓扑图 [双击节点] → 节点详情页
-       │    ├─ SQL 控制台        [返回集群]
-       │    ├─ WAL 查看         [返回集群]
-       │    ├─ CLOG 查看        [返回集群]
-       │    ├─ 写入链路         [返回集群]
-       │    ├─ 读取链路         [返回集群]
-       │    ├─ 事务链路         [返回集群]
-       │    ├─ Buffer 热图      [返回集群]
-       │    ├─ 锁等待图         [返回集群]
-       │    ├─ 内存结构         [返回集群]
-       │    ├─ 执行计划树        [返回集群]
-       │    └─ 事务状态机        [返回集群]
-       └─ 组件主页 → 节点主页（循环）
-```
+- 想了解当前能做什么：先看 [user-manual.md](./user-manual.md)
+- 想了解架构与后续设计：看 [design.md](./design.md) 和 [apply.md](./apply.md)
+- 想做本地运行、备份、排障：看 [ops.md](./ops.md)
 
 ---
 

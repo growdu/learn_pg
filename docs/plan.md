@@ -1,159 +1,260 @@
-﻿# 开发计划（plan.md）
+# 开发计划（plan.md）
 
 最后更新：2026-05-11
 状态：已建立（待执行）
 
 ## 1. 目标
-将当前 Web MVP 从“可演示”推进到“可交付联调”状态，优先补齐未完成事项：
-1. 复制链路指标细化
-2. 工作区配置后端持久化
-3. 节点专题页 demo 数据替换为真实数据
-4. 自动化回归能力建设
 
-## 2. 范围与不在范围
-### 2.1 本计划范围
-- Web 前后端（frontend + backend）
-- 集群/节点可观测主链路
-- 文档与接口契约同步
+将当前项目从“前端持有部分工作区数据 + 后端单全局连接”的实现，推进到“单用户本地工具下的后端真相源架构”。
 
-### 2.2 暂不纳入
-- 完整 Tauri 桌面端产品化
-- 移动端专项适配
-- 大规模多租户权限系统
+本轮之后的主目标：
 
-## 3. 里程碑与阶段
+1. 浏览器只连后端，且不再长期保存工作区真数据和敏感凭据
+2. 后端按节点维护连接状态，不再使用单全局数据库连接
+3. 集群总览、快照、执行等观测接口以后端为准
+4. 单机、主备、逻辑复制、宿主机发现都走真实任务执行链
+5. 建立自动化回归与联调基线
 
-## M1：复制链路指标细化（P0，1 周）
-状态：已完成（当前轮）
+## 2. 当前基线
+
+### 2.1 已有能力
+
+- 工作区：项目 / 集群 / 节点 / 组件
+- 后端数据库连接能力
+- 集群总览与节点观测页
+- 工作区后端持久化
+
+### 2.2 当前缺口
+
+- 前端仍保存工作区缓存与连接 profile
+- 后端仍偏单节点 / 单连接模型
+- `overview` 仍依赖前端回传整套节点连接参数
+- provision / discovery 尚未形成真实运行时闭环
+- `Host / connectionStatus / task logs` 尚未进入稳定 schema
+- provision 失败仍可能在前端生成本地假资源
+
+## 3. 里程碑
+
+## M0：文档与产品定位收口（P0，已完成）
+状态：已完成
 
 ### 任务分解
-1. 扩展后端 cluster overview 响应字段：
-- 物理复制：sent/write/flush/replay LSN、sync_state、lag_bytes
-- 逻辑复制：subscription 状态、latest_end_lsn、latest_end_time
-2. 前端拓扑边详情面板增强：
-- 点击边展示完整指标
-- 指标异常颜色标注（如 lag 超阈值）
-3. 集群看板增加阈值告警展示（使用模板阈值参数）。
+1. 明确产品定位为单用户本地工具。
+2. 明确后端统一连接、统一编排、统一观测。
+3. 完成架构 review 并形成修改方向。
+4. 补齐用户手册和运维手册。
 
 ### 验收标准
-- 物理复制集群可稳定展示 LSN 与 lag 指标。
-- 逻辑复制集群可展示 subscription 状态与关键位点。
-- 边详情与列表数据一致，无字段缺失。
+- 核心文档不再混淆“模板建模”和“真实拉起”。
+- 当前能力、目标能力、限制条件边界清晰。
+
+## M1：收回真相源到后端（P0，1 周）
+状态：未开始
+
+### 任务分解
+1. 移除前端对工作区真数据的长期本地持久化依赖。
+2. 移除前端对数据库密码、DSN、SSH 凭据的长期本地持久化。
+3. 后端提供稳定的工作区读取与写入边界。
+4. 前端只保留 UI 临时状态。
+
+### 验收标准
+- 刷新页面后工作区以后端数据为准。
+- 浏览器本地不再保存数据库密码、DSN、SSH 凭据。
+
+### 交付物
+- `frontend/src/App.tsx`
+- `frontend/src/components/connection/ConnectionManager.tsx`
+- `backend/internal/api/workspace_store.go`
+
+## M2：连接模型重构（P0，1 周）
+状态：未开始
+
+### 任务分解
+1. 后端引入 `ConnectionManager`。
+2. 将 `pgClient` 从单全局连接改为 `nodeId -> connection/session`。
+3. 统一节点激活、连接校验、重连与失败状态。
+4. 节点 schema 增加 `connectionStatus / lastError`。
+
+### 验收标准
+- 多节点切换不再互相覆盖连接。
+- 当前激活节点与非激活节点状态可区分表达。
+- `health / readyz / livez` 语义清晰。
+
+### 交付物
+- `backend/internal/connection/*`
+- `backend/internal/api/handler.go`
+- `backend/internal/api/workspace_store.go`
+- `frontend/src/types/workspace.ts`
+
+## M3：观测接口与资源边界改造（P0，1 周）
+状态：未开始
+
+### 任务分解
+1. `cluster overview` 改为按 `projectId / clusterId` 查询。
+2. `snapshot / execute` 改为按 `nodeId` 使用后端连接上下文。
+3. 前端不再回传整套节点连接参数。
+4. 前端节点与集群页改为按资源 ID 驱动。
+
+### 验收标准
+- overview 不再依赖前端上传节点密码。
+- 观测接口与工作区资源模型一致。
 
 ### 交付物
 - `backend/internal/api/handler.go`
 - `frontend/src/components/workspace/ClusterHomeView.tsx`
-- 接口说明更新（`apply.md`）
+- `frontend/src/App.tsx`
 
-## M2：工作区后端持久化（P0，1-2 周）
-状态：已完成（后端 API + 前端后端优先 + 迁移策略 + 错误提示）
-
-### 任务分解
-1. 后端新增 Workspace API：
-- `GET /api/workspace/projects`
-- `POST /api/workspace/projects`
-- `PUT /api/workspace/projects/:id`
-- `DELETE /api/workspace/projects/:id`
-2. 定义持久化存储结构（JSON 文件或 SQLite，优先 SQLite）。
-3. 前端将 localStorage 模式切换为后端优先（本地作为兜底）。
-4. 增加版本迁移策略（字段新增兼容）。
-
-### 验收标准
-- 刷新页面后项目/集群/节点/组件配置不丢失。
-- 新增、删除、编辑操作在重启后端后仍可恢复。
-- API 异常时前端有明确提示且不崩溃。
-
-### 交付物
-- `backend/internal/api/*workspace*`
-- `frontend/src/App.tsx`（状态加载/保存逻辑）
-- `frontend/src/types/workspace.ts`（版本字段可选）
-
-## M3：节点专题真实化（P1，2 周）
-状态：进行中（当前轮完成锁图/事务状态/Buffer 热图/内存结构去 demo）
-
-### 任务分解
-1. 梳理现有 demo 视图：锁图、执行计划树、Buffer 热图、事务状态、内存结构。
-2. 为每个视图定义真实数据源：
-- 来自 `/api/cluster/node/inspect`
-- 来自新增专题 API（如 `/api/locks`, `/api/buffers`）
-- 来自已有 collector 事件流
-3. 逐页替换 demo 生成逻辑，保留“无数据占位态”而非假数据。
-4. 统一数据更新时间与来源标识。
-
-### 验收标准
-- 默认不再展示硬编码 demo 数据。
-- 每个专题页明确显示“实时数据/暂无数据/接口异常”。
-- 至少 3 个专题页完成真实化（优先：锁、事务、Buffer）。
-
-### 交付物
-- `frontend/src/components/*View.tsx`
-- `frontend/src/hooks/useVisualizationData.ts`
-- 对应后端 API
-
-## M4：自动化回归与联调基线（P1，1 周）
+## M4：补齐数据模型（P1，1 周）
 状态：未开始
 
 ### 任务分解
-1. 前端关键流程 E2E（项目创建、集群创建、节点下钻）。
-2. 后端接口契约测试（cluster overview/workspace API）。
-3. 联调脚本化：一键启动 + 健康检查。
-4. 文档加入“联调检查清单”。
+1. 增加 `WorkspaceHost`。
+2. 增加 `WorkspaceNode.connectionStatus / hostId / lastError`。
+3. 增加任务的 `taskType / result / logs`。
+4. 为 schema 升级增加迁移逻辑。
 
 ### 验收标准
-- 核心流程至少 5 条自动化用例通过。
-- 后端关键接口测试稳定通过。
-- 联调环境可在固定命令下复现。
+- 目标文档中的核心对象都进入真实 schema。
+- 前后端类型与持久化结构一致。
+
+### 交付物
+- `backend/internal/api/workspace_store.go`
+- `frontend/src/types/workspace.ts`
+- `docs/design.md`
+
+## M5：单机 provision 真实闭环（P0，1 周）
+状态：未开始
+
+### 任务分解
+1. 抽出 `ProvisionService` 和 `docker provider`。
+2. 打通 `POST /api/provision/single` 真实执行链。
+3. 任务完成后写回工作区并触发连接校验。
+4. 前端展示真实任务状态与跳转。
+
+### 验收标准
+- 点击“创建单机”后，可真实拉起 PostgreSQL。
+- 成功后自动进入观测。
+- 失败时任务含步骤错误信息。
+
+### 交付物
+- `backend/internal/provision/*`
+- `backend/internal/tasks/*`
+- `backend/internal/api/provision_discovery.go`
+- `frontend/src/components/workspace/TemplateDialog.tsx`
+
+## M6：主备与逻辑复制闭环（P1，2 周）
+状态：未开始
+
+### 任务分解
+1. 打通 `POST /api/provision/physical`。
+2. 打通 `POST /api/provision/logical`。
+3. 自动校验复制 / 订阅状态。
+4. 将真实指标接入集群总览与拓扑图。
+
+### 验收标准
+- 主备与逻辑复制拉起后可进入真实观测状态。
+- 集群页可看到真实复制指标。
+
+### 交付物
+- `backend/internal/provision/*`
+- `frontend/src/components/workspace/ClusterHomeView.tsx`
+
+## M7：宿主机自动发现与导入（P0，1 周）
+状态：未开始
+
+### 任务分解
+1. 引入 `Host` 资源接口。
+2. 抽出 `HostDiscoveryService`。
+3. 通过 SSH 扫描 PostgreSQL 实例信息。
+4. 支持将扫描结果导入为节点并进入观测。
+
+### 验收标准
+- 添加一台机器后，可看到实例列表。
+- 用户可导入实例并进入观测。
+
+### 交付物
+- `backend/internal/discovery/*`
+- `backend/internal/api/*host*`
+- `frontend/src/components/workspace/*`
+
+## M8：删除错误 fallback 与补自动化（P1，1 周）
+状态：未开始
+
+### 任务分解
+1. 删除 provision 失败后的本地模板 fallback。
+2. 增加 workspace / provision / discovery / overview 契约测试。
+3. 增加关键流程 E2E：
+- 手动接入数据库节点
+- 节点切换
+- 单机 provision
+- 宿主机导入
+4. 增加联调检查清单。
+
+### 验收标准
+- 失败就是明确失败，不再生成假资源。
+- 至少 6 条主链路自动化用例稳定通过。
 
 ### 交付物
 - `frontend` E2E 测试
 - `backend` API 测试
-- `apply.md` + `README.md` 联调章节
+- `docs/user-manual.md`
+- `docs/ops.md`
 
-## 4. 排期建议（滚动）
+## 4. 排期建议
+
 - 第 1 周：M1
-- 第 2-3 周：M2
-- 第 4-5 周：M3
-- 第 6 周：M4 + 回归修复
+- 第 2 周：M2
+- 第 3 周：M3
+- 第 4 周：M4
+- 第 5 周：M5
+- 第 6-7 周：M6
+- 第 8 周：M7
+- 第 9 周：M8
 
 ## 5. 风险与应对
-1. 指标采集跨 PG 版本差异
-- 应对：后端字段分层（通用字段 + 可选字段），前端容错渲染。
-2. 后端持久化改造影响现有流程
-- 应对：分阶段切换，保留 localStorage fallback。
-3. 专题页真实化依赖不足
-- 应对：优先改造可直接查询的数据页，事件流依赖的页延后。
-4. 测试环境不稳定
-- 应对：固定测试数据集和初始化脚本，减少环境噪声。
+
+1. 当前单连接模型阻塞多节点观测
+- 应对：优先完成 M2
+
+2. 前端仍持有工作区和凭据导致状态漂移
+- 应对：优先完成 M1
+
+3. Docker / 本机环境差异影响 provision 成功率
+- 应对：先锁定 `docker` provider 为 MVP
+
+4. SSH 扫描稳定性与权限问题
+- 应对：先做 Linux + SSH MVP
+
+5. 复制初始化流程复杂
+- 应对：单机 -> 主备 -> 逻辑复制按顺序推进
 
 ## 6. 回滚策略
-- 每个里程碑单独分支与提交。
-- API 字段新增采用向后兼容，不做破坏性替换。
-- 前端保留“旧路径”开关（feature flag）用于快速回退。
+
+- 每个里程碑独立提交
+- 前端保留“手动添加数据库节点”作为兜底入口
+- provision / discovery 在真实闭环完成前不替换手动主链路
 
 ## 7. 完成定义（DoD）
-1. 代码合并到主干，核心流程人工验证通过。
-2. 对应文档（need/design/apply/README/plan）已更新。
-3. 关键接口与页面无明显回归。
+
+1. 工作区、连接状态、任务状态以后端为唯一真相源
+2. 浏览器不再长期保存数据库密码、DSN、SSH 凭据
+3. 多节点观测基于 `nodeId` 连接注册表稳定运行
+4. 手动接入、一键拉起、宿主机导入三类入口都能走通
+5. 自动化用例覆盖核心主链路
 
 ## 8. 计划维护记录
-- 2026-05-06：首次建立计划，已写入 `plan.md`，状态设为“已建立（待执行）”。
-- 2026-05-06：开始执行 M1 并完成第一轮落地：后端复制指标字段扩展、前端链路详情增强、阈值告警接入。
-- 2026-05-06：开始执行 M2，已完成 Workspace 持久化第一步（后端 API 与前端后端优先同步）。
-- 2026-05-06：补充前端同步失败提示与本地兜底提示，M2 进入收尾阶段（待补迁移策略）。
-- 2026-05-06：补充 schemaVersion 与旧数据迁移归一化逻辑，M2 完成。
-- 2026-05-06：开始执行 M3，锁等待图与事务状态页面改为优先使用 `/api/snapshot` 真实数据，移除默认 demo 回退。
-- 2026-05-06：继续执行 M3，Buffer 热图移除随机/时序演示数据，内存结构页改为 snapshot+事件流真实数据优先并补充空态提示。
-- 2026-05-06：继续执行 M3，执行计划树移除内置 DEMO_PLAN，改为仅展示真实计划数据并提供空态说明。
-- 2026-05-06：继续执行 M3，Pipeline 视图移除演示动画与随机耗时，改为仅真实阶段数据渲染并统一空态提示。
-- 2026-05-06：继续执行 M3，节点主页文案乱码已清理，入口卡片统一为中文并强调节点级观测能力。
-- 2026-05-06：继续执行 M3，锁图/事务状态/SQL/WAL/CLOG 页面完成中文文案统一、空态统一、数据来源提示统一。
-- 2026-05-06：继续执行 M3，补齐节点层导航入口，新增 write/read/transaction/buffer/plan 的侧边栏与节点主页卡片可达性。
-- 2026-05-06：继续执行 M3，新增通用节点页头组件 NodePageHeader，已接入 SQL/WAL/CLOG/Lock/Transaction/Buffer 六个专题页（标题/来源/更新时间统一）。
-- 2026-05-06：继续执行 M3，NodePageHeader 已补齐接入 Memory/Pipeline/Plan，节点专题页头规范全部统一。
+
+- 2026-05-11：完成单用户本地工具架构 review。
+- 2026-05-11：基于 review 结果重写实施方案与开发计划。
 
 ## 9. 当前进度摘要
-- M1：100%（已完成）
-- M2：100%（已完成）
-- M3：100%（已完成）
-- M4：0%（未开始）
 
+- M0：100%（已完成）
+- M1：0%（未开始）
+- M2：0%（未开始）
+- M3：0%（未开始）
+- M4：0%（未开始）
+- M5：0%（未开始）
+- M6：0%（未开始）
+- M7：0%（未开始）
+- M8：0%（未开始）

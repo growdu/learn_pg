@@ -1,285 +1,278 @@
 # PG Kernel Visualizer 运维手册
 
-> PostgreSQL 内核学习可视化平台 - 运维指南
+## 1. 适用范围
 
----
+本文档适用于当前产品定位：**单用户本地工具**。
 
-## 1. 系统架构
+主要运行形态：
+- 本机开发运行
+- 本机 Docker Compose 运行
+- 可选连接本机或远程 PostgreSQL
 
-### 1.1 组件概览
+不在本文档重点范围内：
+- 多节点集群化部署
+- 多用户共享后端
+- Kubernetes / Swarm 运维
 
+## 2. 运行组件
+
+当前系统由以下组件组成：
+
+- `frontend`：React 前端
+- `backend`：Go 后端
+- `postgres`：被观测数据库，可能是本机实例或 Docker 容器
+- `collector`：可选的 eBPF / 日志采集组件
+
+逻辑关系：
+
+```text
+Browser -> Backend -> PostgreSQL / Host / Collector
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      Docker Compose                         │
-├──────────────┬──────────────┬──────────────┬────────────────┤
-│  PostgreSQL  │   Backend    │   Frontend  │   Collector    │
-│     :5432    │    :3000     │     :80     │    (可选)       │
-└──────┬───────┴──────┬───────┴──────┬───────┴───────┬────────┘
-       │              │              │               │
-       │              │              │        ┌──────┴──────┐
-       │              │              │        │  WebSocket  │
-       │              │              │        │   :3000     │
-       │              │              │        └─────────────┘
-       │         ┌────┴─────┐         │
-       │         │  pg_wal  │         │
-       │         │  pg_clog │         │
-       │         └──────────┘         │
-       └──────────────────────────────┘
-```
 
-### 1.2 端口映射
+## 3. 启动方式
 
-| 服务 | 端口 | 用途 |
-|------|------|------|
-| PostgreSQL | 5432 | 数据库连接 |
-| Backend API | 3000 | REST API |
-| Backend WS | 3000 | WebSocket 实时事件 (与 HTTP API 同端口) |
-| Frontend | 80 | Web UI |
-| Collector | 8090 | eBPF 采集器 (可选) |
+### 3.1 本地开发启动
 
----
-
-## 2. 快速部署
-
-### 2.1 环境要求
-
-- Docker 20.10+
-- Docker Compose 2.0+
-- 2GB+ 可用内存
-- 10GB+ 可用磁盘
-
-### 2.2 启动命令
+后端：
 
 ```bash
-# 完整环境 (包含 eBPF 采集器)
-docker compose up -d
+cd backend
+go run ./cmd/server
+```
 
-# 仅核心服务 (不需要特权)
+前端：
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### 3.2 Docker Compose 启动
+
+```bash
+docker compose -f docker-compose.dev.yml up -d
+```
+
+如果只需要核心链路：
+
+```bash
 docker compose up -d postgres backend frontend
-
-# 查看服务状态
-docker compose ps
-
-# 查看日志
-docker compose logs -f backend
 ```
 
----
+## 4. 日常检查
 
-## 3. 配置管理
+### 4.1 健康检查
 
-### 3.1 环境变量
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `PG_HOST` | localhost | PostgreSQL 主机 |
-| `PG_PORT` | 5432 | PostgreSQL 端口 |
-| `PG_USER` | postgres | PostgreSQL 用户 |
-| `PG_PASSWORD` | postgres | PostgreSQL 密码 |
-| `API_PORT` | 3000 | Backend API 端口 |
-| `ENABLE_EBPF` | true | 启用 eBPF 采集 |
-| `LOG_LEVEL` | info | 日志级别 |
-
-### 3.2 修改配置
+后端：
 
 ```bash
-# 停止服务
-docker compose down
-
-# 编辑 .env 文件
-vim .env
-
-# 重启服务
-docker compose up -d
-```
-
----
-
-## 4. 监控与日志
-
-### 4.1 查看日志
-
-```bash
-# 所有服务日志
-docker compose logs -f
-
-# 单个服务
-docker compose logs -f backend
-
-# 最近 100 行
-docker compose logs --tail=100 postgres
-```
-
-### 4.2 健康检查
-
-```bash
-# Backend 健康检查
 curl http://localhost:3000/health
-
-# PostgreSQL 就绪
-docker compose exec postgres pg_isready -U postgres
+curl http://localhost:3000/readyz
+curl http://localhost:3000/livez
 ```
 
-### 4.3 资源监控
+说明：
+- `/health`：后端进程可用，且当前数据库连接状态可判断
+- `/readyz`：后端依赖就绪
+- `/livez`：进程活着
+
+### 4.2 前端可达性
+
+检查页面是否能正常打开：
+
+- 开发模式：Vite 本地地址
+- Docker 模式：`http://localhost`
+
+### 4.3 数据库可达性
+
+如果系统无法连接数据库，先手工验证：
 
 ```bash
-# 查看容器资源使用
-docker stats
-
-# 查看特定容器
-docker stats pgv-backend pgv-frontend
+pg_isready -h 127.0.0.1 -p 5432 -U postgres
 ```
 
----
-
-## 5. 备份与恢复
-
-### 5.1 数据卷
+或：
 
 ```bash
-# 查看数据卷
-docker volume ls | grep pgv-
-
-# 备份数据卷
-docker run --rm -v pgv-pg_data:/data -v $(pwd):/backup alpine tar czf /backup/pg_data_backup.tar.gz /data
-
-# 恢复数据卷
-docker run --rm -v pgv-pg_data:/data -v $(pwd):/backup alpine tar xzf /backup/pg_data_backup.tar.gz -C /
+psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -c "select version();"
 ```
 
-### 5.2 定时备份 (Cron)
+## 5. 日志与排障
+
+### 5.1 查看后端日志
+
+本地运行时，直接看终端输出。
+
+Docker 模式：
 
 ```bash
-# 编辑 crontab
-crontab -e
-
-# 添加每日备份 (凌晨 2 点)
-0 2 * * * cd /path/to/project && docker run --rm -v pgv-pg_data:/data -v $(pwd)/backups:/backup alpine tar czf /backup/pg_$(date +\%Y\%m\%d).tar.gz /data
+docker compose logs -f backend
 ```
 
----
+### 5.2 查看前端日志
 
-## 6. 升级与迁移
-
-### 6.1 版本升级
+- 开发模式：查看 Vite 终端和浏览器控制台
+- Docker 模式：查看 nginx / frontend 容器日志
 
 ```bash
-# 拉取最新镜像
-docker compose pull
-
-# 停止服务
-docker compose down
-
-# 重新启动
-docker compose up -d
+docker compose logs -f frontend
 ```
 
-### 6.2 数据迁移
+### 5.3 查看数据库日志
+
+如果数据库在 Docker 中：
 
 ```bash
-# 导出数据
-docker compose exec -T postgres pg_dump -U postgres postgres > dump.sql
-
-# 导入数据
-docker compose exec -T postgres psql -U postgres postgres < dump.sql
+docker compose logs -f postgres
 ```
 
----
+如果数据库在本机：
+- 查看 PostgreSQL 日志目录
+- 或使用 `journalctl` / system service 日志
 
-## 7. 故障排查
+## 6. 备份与恢复
 
-### 7.1 常见问题
+## 6.1 需要备份的内容
 
-| 问题 | 原因 | 解决方案 |
-|------|------|----------|
-| Backend 无法连接 PG | PG 未就绪 | 等待 PG health check 通过 |
-| WebSocket 连接失败 | 端口未开放 | 检查防火墙设置 |
-| eBPF 探针加载失败 | 权限不足 | 使用日志解析模式 |
-| 磁盘空间不足 | WAL 文件过多 | 清理旧 WAL 文件 |
+对于单用户本地工具，最重要的是两类数据：
 
-### 7.2 调试命令
+1. 工作区数据
+2. 被观测数据库的数据（如果数据库也是本机工具链的一部分）
+
+### 6.2 工作区数据备份
+
+当前后端使用本地文件持久化工作区和任务状态，至少应备份：
+
+- `backend/data/workspace_projects.json`
+- `backend/data/provision_tasks.json`
+
+示例：
 
 ```bash
-# 进入容器调试
-docker compose exec backend sh
-docker compose exec postgres bash
-
-# 查看网络连接
-docker compose exec backend ping postgres
-
-# 检查端口
-docker compose exec backend netstat -tlnp
+mkdir -p backups
+cp backend/data/workspace_projects.json backups/workspace_projects.json.bak
+cp backend/data/provision_tasks.json backups/provision_tasks.json.bak
 ```
 
----
+### 6.3 PostgreSQL 数据备份
 
-## 8. 安全配置
-
-### 8.1 更改默认密码
+如果数据库由 Docker 启动：
 
 ```bash
-# 修改 PostgreSQL 密码
-docker compose exec postgres psql -U postgres -c "ALTER USER postgres PASSWORD 'your_password'"
-
-# 更新环境变量
-echo "PG_PASSWORD=your_password" >> .env
+docker compose exec -T postgres pg_dump -U postgres postgres > backups/postgres.sql
 ```
 
-### 8.2 启用 SSL
-
-PostgreSQL 默认配置中已启用 `sslmode=prefer`，如需强制 SSL：
+如果数据库在本机：
 
 ```bash
-# 在 docker-compose.yml 中添加
-environment:
-  - POSTGRES_HOST_AUTH_METHOD=md5
+pg_dump -h 127.0.0.1 -p 5432 -U postgres postgres > backups/postgres.sql
 ```
 
----
+### 6.4 恢复
 
-## 9. 性能调优
-
-### 9.1 PostgreSQL 参数
-
-```yaml
-# docker-compose.yml
-postgres:
-  command:
-    - "postgres"
-    - "-cshared_buffers=512MB"
-    - "-ceffective_cache_size=1GB"
-    - "-cmax_connections=100"
-    - "-cwork_mem=16MB"
-```
-
-### 9.2 资源限制
-
-```yaml
-# docker-compose.yml
-services:
-  backend:
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-```
-
----
-
-## 10. 卸载
+工作区恢复：
 
 ```bash
-# 停止并删除服务
-docker compose down -v
-
-# 删除镜像
-docker rmi pgv-backend pgv-frontend pgv-collector
-
-# 删除数据卷
-docker volume rm pgv-pg_data
+cp backups/workspace_projects.json.bak backend/data/workspace_projects.json
+cp backups/provision_tasks.json.bak backend/data/provision_tasks.json
 ```
 
----
+数据库恢复：
 
-*最后更新: 2026-03-31*
+```bash
+psql -h 127.0.0.1 -p 5432 -U postgres postgres < backups/postgres.sql
+```
+
+## 7. 配置管理
+
+### 7.1 关键配置项
+
+| 变量 | 说明 |
+|------|------|
+| `PG_HOST` | 默认数据库地址 |
+| `PG_PORT` | 默认数据库端口 |
+| `PG_USER` | 默认数据库用户名 |
+| `PG_PASSWORD` | 默认数据库密码 |
+| `PG_DATABASE` | 默认数据库名 |
+| `PG_DATA_DIR` | 数据目录 |
+| `API_PORT` | 后端端口 |
+| `LOG_LEVEL` | 日志级别 |
+
+### 7.2 凭据管理建议
+
+- 不要把生产数据库密码提交进仓库。
+- 对单用户本地工具，建议使用本地 `.env` 或本机私有配置。
+- 浏览器端不应作为凭据长期存储位置。
+
+## 8. 常见故障处理
+
+### 8.1 后端启动了，但页面看不到数据
+
+优先检查：
+
+1. 后端 `health` 是否正常
+2. 当前节点是否已成功连接
+3. PostgreSQL 是否实际可达
+4. 是否只是当前页暂无数据而非系统异常
+
+### 8.2 集群总览为空
+
+常见原因：
+
+1. 工作区中没有节点
+2. 节点连接参数错误
+3. 后端尚未成功连接数据库
+
+建议动作：
+
+1. 回到集群页检查节点配置
+2. 手动触发连接
+3. 查看后端日志
+
+### 8.3 WebSocket 连接失败
+
+检查：
+
+```bash
+curl http://localhost:3000/health
+```
+
+如果后端正常，再检查：
+- 前端是否走了正确的 `/ws`
+- 反向代理是否带了 `Upgrade` 头
+
+### 8.4 eBPF 不可用
+
+这是当前可接受情况。
+
+处理原则：
+- 先保证基础 SQL / snapshot / overview 路径可用
+- eBPF 失败时退回日志解析或无事件流模式
+
+## 9. 升级建议
+
+单用户本地工具的安全升级流程：
+
+1. 备份工作区文件
+2. 备份 PostgreSQL 数据
+3. 更新代码或镜像
+4. 重启 backend / frontend
+5. 执行健康检查
+6. 打开页面验证工作区和节点连接状态
+
+## 10. 运维边界
+
+当前阶段不建议把这套系统当作：
+
+- 多用户共享平台
+- 长期公网服务
+- 自动扩缩容系统
+- 高可用集群控制平面
+
+如果未来演进到这些方向，应重新设计：
+- 连接隔离
+- 凭据托管
+- 任务队列
+- 权限模型
+- 持久化方案
