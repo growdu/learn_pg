@@ -12,6 +12,9 @@ import (
 
 const currentWorkspaceSchemaVersion = 1
 
+// maskedPassword is used in API responses so passwords are never exposed to the frontend.
+const maskedPassword = "********"
+
 type workspaceNode struct {
 	ID           string                 `json:"id"`
 	Name         string                 `json:"name"`
@@ -84,23 +87,8 @@ func newWorkspaceStore(path string) *workspaceStore {
 	return &workspaceStore{path: path}
 }
 
-func (s *workspaceStore) readSnapshot() ([]workspaceProject, int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	env, err := s.readEnvelopeLocked()
-	if err != nil {
-		return nil, 0, err
-	}
-	return env.Projects, env.SchemaVersion, nil
-}
-
-func (s *workspaceStore) readAll() ([]workspaceProject, error) {
-	projects, _, err := s.readSnapshot()
-	return projects, err
-}
-
-func (s *workspaceStore) readEnvelopeLocked() (workspaceEnvelope, error) {
+// readEnvelopeNoLock reads the envelope without acquiring lock. Caller must hold s.mu.
+func (s *workspaceStore) readEnvelopeNoLock() (workspaceEnvelope, error) {
 	b, err := os.ReadFile(s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -128,6 +116,22 @@ func (s *workspaceStore) readEnvelopeLocked() (workspaceEnvelope, error) {
 	}
 	env.Projects = normalizeProjects(env.Projects)
 	return env, nil
+}
+
+func (s *workspaceStore) readSnapshot() ([]workspaceProject, int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	env, err := s.readEnvelopeNoLock()
+	if err != nil {
+		return nil, 0, err
+	}
+	return env.Projects, env.SchemaVersion, nil
+}
+
+func (s *workspaceStore) readAll() ([]workspaceProject, error) {
+	projects, _, err := s.readSnapshot()
+	return projects, err
 }
 
 func (s *workspaceStore) writeAll(projects []workspaceProject) error {
@@ -241,6 +245,246 @@ func (s *workspaceStore) appendNode(projectID, clusterID string, node workspaceN
 		return fmt.Errorf("cluster not found: %s", clusterID)
 	}
 	return fmt.Errorf("project not found: %s", projectID)
+}
+
+// GetProject returns a single project by ID, or nil if not found.
+func (s *workspaceStore) GetProject(id string) (*workspaceProject, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	env, err := s.readEnvelopeNoLock()
+	if err != nil {
+		return nil, err
+	}
+	for i := range env.Projects {
+		if env.Projects[i].ID == id {
+			return &env.Projects[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// GetCluster returns a single cluster within a project, or nil if not found.
+func (s *workspaceStore) GetCluster(projectID, clusterID string) (*workspaceCluster, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	env, err := s.readEnvelopeNoLock()
+	if err != nil {
+		return nil, err
+	}
+	for pi := range env.Projects {
+		if env.Projects[pi].ID != projectID {
+			continue
+		}
+		for ci := range env.Projects[pi].Clusters {
+			if env.Projects[pi].Clusters[ci].ID == clusterID {
+				return &env.Projects[pi].Clusters[ci], nil
+			}
+		}
+		return nil, nil
+	}
+	return nil, nil
+}
+
+// GetNode returns a single node within a project/cluster, or nil if not found.
+func (s *workspaceStore) GetNode(projectID, clusterID, nodeID string) (*workspaceNode, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	env, err := s.readEnvelopeNoLock()
+	if err != nil {
+		return nil, err
+	}
+	for pi := range env.Projects {
+		if env.Projects[pi].ID != projectID {
+			continue
+		}
+		for ci := range env.Projects[pi].Clusters {
+			if env.Projects[pi].Clusters[ci].ID != clusterID {
+				continue
+			}
+			for ni := range env.Projects[pi].Clusters[ci].Nodes {
+				if env.Projects[pi].Clusters[ci].Nodes[ni].ID == nodeID {
+					return &env.Projects[pi].Clusters[ci].Nodes[ni], nil
+				}
+			}
+			return nil, nil
+		}
+		return nil, nil
+	}
+	return nil, nil
+}
+
+// UpdateProjectLocked updates project fields via patch callback.
+func (s *workspaceStore) UpdateProjectLocked(id string, patch func(*workspaceProject) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	env, err := s.readEnvelopeNoLock()
+	if err != nil {
+		return err
+	}
+	for i := range env.Projects {
+		if env.Projects[i].ID == id {
+			if err := patch(&env.Projects[i]); err != nil {
+				return err
+			}
+			return s.writeEnvelopeLocked(env)
+		}
+	}
+	return fmt.Errorf("project not found: %s", id)
+}
+
+// DeleteProjectLocked deletes project by ID.
+func (s *workspaceStore) DeleteProjectLocked(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	env, err := s.readEnvelopeNoLock()
+	if err != nil {
+		return err
+	}
+	next := make([]workspaceProject, 0, len(env.Projects))
+	for _, p := range env.Projects {
+		if p.ID != id {
+			next = append(next, p)
+		}
+	}
+	if len(next) == len(env.Projects) {
+		return fmt.Errorf("project not found: %s", id)
+	}
+	env.Projects = next
+	return s.writeEnvelopeLocked(env)
+}
+
+// UpdateClusterLocked updates cluster via patch callback.
+func (s *workspaceStore) UpdateClusterLocked(projectID, clusterID string, patch func(*workspaceCluster) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	env, err := s.readEnvelopeNoLock()
+	if err != nil {
+		return err
+	}
+	for pi := range env.Projects {
+		if env.Projects[pi].ID != projectID {
+			continue
+		}
+		for ci := range env.Projects[pi].Clusters {
+			if env.Projects[pi].Clusters[ci].ID == clusterID {
+				if err := patch(&env.Projects[pi].Clusters[ci]); err != nil {
+					return err
+				}
+				return s.writeEnvelopeLocked(env)
+			}
+		}
+		return fmt.Errorf("cluster not found: %s", clusterID)
+	}
+	return fmt.Errorf("project not found: %s", projectID)
+}
+
+// DeleteClusterLocked deletes cluster from project.
+func (s *workspaceStore) DeleteClusterLocked(projectID, clusterID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	env, err := s.readEnvelopeNoLock()
+	if err != nil {
+		return err
+	}
+	for pi := range env.Projects {
+		if env.Projects[pi].ID != projectID {
+			continue
+		}
+		clusters := env.Projects[pi].Clusters
+		for ci := range clusters {
+			if clusters[ci].ID == clusterID {
+				env.Projects[pi].Clusters = append(clusters[:ci], clusters[ci+1:]...)
+				return s.writeEnvelopeLocked(env)
+			}
+		}
+		return fmt.Errorf("cluster not found: %s", clusterID)
+	}
+	return fmt.Errorf("project not found: %s", projectID)
+}
+
+// UpdateNodeLocked updates node via patch callback.
+func (s *workspaceStore) UpdateNodeLocked(projectID, clusterID, nodeID string, patch func(*workspaceNode) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	env, err := s.readEnvelopeNoLock()
+	if err != nil {
+		return err
+	}
+	for pi := range env.Projects {
+		if env.Projects[pi].ID != projectID {
+			continue
+		}
+		for ci := range env.Projects[pi].Clusters {
+			if env.Projects[pi].Clusters[ci].ID != clusterID {
+				continue
+			}
+			for ni := range env.Projects[pi].Clusters[ci].Nodes {
+				if env.Projects[pi].Clusters[ci].Nodes[ni].ID == nodeID {
+					if err := patch(&env.Projects[pi].Clusters[ci].Nodes[ni]); err != nil {
+						return err
+					}
+					return s.writeEnvelopeLocked(env)
+				}
+			}
+			return fmt.Errorf("node not found: %s", nodeID)
+		}
+		return fmt.Errorf("cluster not found: %s", clusterID)
+	}
+	return fmt.Errorf("project not found: %s", projectID)
+}
+
+// DeleteNodeLocked deletes node from cluster.
+func (s *workspaceStore) DeleteNodeLocked(projectID, clusterID, nodeID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	env, err := s.readEnvelopeNoLock()
+	if err != nil {
+		return err
+	}
+	for pi := range env.Projects {
+		if env.Projects[pi].ID != projectID {
+			continue
+		}
+		for ci := range env.Projects[pi].Clusters {
+			if env.Projects[pi].Clusters[ci].ID != clusterID {
+				continue
+			}
+			nodes := env.Projects[pi].Clusters[ci].Nodes
+			for ni := range nodes {
+				if nodes[ni].ID == nodeID {
+					env.Projects[pi].Clusters[ci].Nodes = append(nodes[:ni], nodes[ni+1:]...)
+					return s.writeEnvelopeLocked(env)
+				}
+			}
+			return fmt.Errorf("node not found: %s", nodeID)
+		}
+		return fmt.Errorf("cluster not found: %s", clusterID)
+	}
+	return fmt.Errorf("project not found: %s", projectID)
+}
+
+// MaskNode returns a copy of the node with password masked for API responses.
+func MaskNode(n workspaceNode) workspaceNode {
+	n.Password = maskedPassword
+	return n
+}
+
+// MaskCluster returns a copy of the cluster with all node passwords masked.
+func MaskCluster(c workspaceCluster) workspaceCluster {
+	c.Nodes = make([]workspaceNode, len(c.Nodes))
+	for i := range c.Nodes {
+		c.Nodes[i] = MaskNode(c.Nodes[i])
+	}
+	return c
 }
 
 func normalizeProjects(projects []workspaceProject) []workspaceProject {
