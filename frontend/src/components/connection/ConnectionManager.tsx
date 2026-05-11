@@ -12,30 +12,6 @@ export interface ConnectionProfile {
   database: string
 }
 
-const STORAGE_KEY = 'pgv_profiles'
-
-function loadProfiles(): ConnectionProfile[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) return JSON.parse(raw)
-  } catch {}
-  return [
-    {
-      id: 'default',
-      name: 'Local PostgreSQL',
-      host: 'localhost',
-      port: 5432,
-      user: 'postgres',
-      password: 'postgres',
-      database: 'postgres',
-    },
-  ]
-}
-
-function saveProfiles(profiles: ConnectionProfile[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles))
-}
-
 interface Props {
   onConnect: (connected: boolean) => void
   onVersion: (version: string) => void
@@ -43,7 +19,7 @@ interface Props {
 
 export default function ConnectionManager({ onConnect, onVersion }: Props) {
   const { connected, setConfig, setConnected, setVersion } = usePGStore()
-  const [profiles, setProfiles] = useState<ConnectionProfile[]>(loadProfiles)
+  const [profiles, setProfiles] = useState<ConnectionProfile[]>([])
   const [activeProfile, setActiveProfile] = useState<ConnectionProfile | null>(null)
   const [editingProfile, setEditingProfile] = useState<Partial<ConnectionProfile> | null>(null)
   const [isEditing, setIsEditing] = useState(false)
@@ -114,7 +90,6 @@ export default function ConnectionManager({ onConnect, onVersion }: Props) {
       updated = [...profiles, profile]
     }
     setProfiles(updated)
-    saveProfiles(updated)
     setEditingProfile(null)
     setIsEditing(false)
   }
@@ -122,7 +97,6 @@ export default function ConnectionManager({ onConnect, onVersion }: Props) {
   const handleDeleteProfile = (id: string) => {
     const updated = profiles.filter((p) => p.id !== id)
     setProfiles(updated)
-    saveProfiles(updated)
   }
 
   const startAdd = () => {
