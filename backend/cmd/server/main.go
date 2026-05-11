@@ -14,7 +14,6 @@ import (
 	"pg-visualizer-backend/internal/config"
 	"pg-visualizer-backend/internal/connection"
 	"pg-visualizer-backend/internal/middleware"
-	"pg-visualizer-backend/internal/pg"
 	"pg-visualizer-backend/internal/ws"
 )
 
@@ -41,19 +40,25 @@ func main() {
 	connMgr := connection.NewManager(cfg)
 
 	// Create API handler
-	handler := api.NewHandler(cfg, hub)
-	handler.SetConnMgr(connMgr)
+	handler := api.NewHandler(cfg, hub, connMgr)
 
 	// Auto-connect to PostgreSQL on startup
 	if cfg.PGHost != "" {
-		client := pg.NewClient()
-		if err := client.Connect(cfg.PGHost, cfg.PGPort, cfg.PGUser, cfg.PGPassword, cfg.PGDatabase); err != nil {
+		connMgr.Register("__auto__", connection.Config{
+			Host:     cfg.PGHost,
+			Port:     cfg.PGPort,
+			User:     cfg.PGUser,
+			Password: cfg.PGPassword,
+			Database: cfg.PGDatabase,
+		})
+		if err := connMgr.Activate("__auto__"); err != nil {
 			slog.Warn("auto-connect to PG failed, use /api/connect to connect later",
 				"error", err)
 		} else {
-			handler.SetPGClient(client)
-			if v, err := client.GetVersion(); err == nil {
-				slog.Info("PostgreSQL connected", "version", v)
+			if nodeId, client := connMgr.GetActive(); client != nil {
+				if v, err := client.GetVersion(); err == nil {
+					slog.Info("PostgreSQL connected", "node", nodeId, "version", v)
+				}
 			}
 		}
 	}

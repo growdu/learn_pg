@@ -26,7 +26,6 @@ import (
 // Handler holds API dependencies
 type Handler struct {
 	config    *config.Config
-	pgClient  *pg.Client
 	hub       *ws.Hub
 	connMgr   *connection.Manager
 	workspace *workspaceStore
@@ -36,10 +35,11 @@ type Handler struct {
 }
 
 // NewHandler creates a new API handler
-func NewHandler(cfg *config.Config, hub *ws.Hub) *Handler {
+func NewHandler(cfg *config.Config, hub *ws.Hub, connMgr *connection.Manager) *Handler {
 	h := &Handler{
 		config:    cfg,
 		hub:       hub,
+		connMgr:   connMgr,
 		workspace: newWorkspaceStore(defaultWorkspaceFilePath()),
 		tasks:     make(map[string]provisionTask),
 		taskPath:  defaultProvisionTaskFilePath(),
@@ -54,11 +54,6 @@ func defaultWorkspaceFilePath() string {
 
 func defaultProvisionTaskFilePath() string {
 	return filepath.Join("data", "provision_tasks.json")
-}
-
-// SetPGClient sets the PostgreSQL client
-func (h *Handler) SetPGClient(client *pg.Client) {
-	h.pgClient = client
 }
 
 // SetConnMgr sets the connection manager
@@ -105,10 +100,11 @@ type healthResponse struct {
 
 // ServeHealth handles GET /health
 func (h *Handler) ServeHealth(w http.ResponseWriter, r *http.Request) {
-	pgOK := h.pgClient != nil
-	if pgOK {
-		if err := h.pgClient.Ping(); err != nil {
-			pgOK = false
+	_, client := h.connMgr.GetActive()
+	pgOK := false
+	if client != nil {
+		if err := client.Ping(); err == nil {
+			pgOK = true
 		}
 	}
 	writeJSON(w, r, http.StatusOK, healthResponse{
@@ -119,7 +115,8 @@ func (h *Handler) ServeHealth(w http.ResponseWriter, r *http.Request) {
 
 // ServeReadyz handles GET /readyz — readiness probe (all deps up)
 func (h *Handler) ServeReadyz(w http.ResponseWriter, r *http.Request) {
-	pgOK := h.pgClient != nil && h.pgClient.Ping() == nil
+	_, client := h.connMgr.GetActive()
+	pgOK := client != nil && client.Ping() == nil
 	dataDir := h.pgDataDir()
 	dataDirOK := dataDir != "" && dirExists(dataDir)
 
@@ -190,18 +187,21 @@ func (h *Handler) ServeConnect(w http.ResponseWriter, r *http.Request) {
 	password := orDefaultStr(req.Password, h.config.PGPassword)
 	db := orDefaultStr(req.Database, h.config.PGDatabase)
 
-	// Close existing connection
-	if h.pgClient != nil {
-		h.pgClient.Close()
-	}
-
 	client := &pg.Client{}
 	if err := client.Connect(host, port, user, password, db); err != nil {
 		h.writeError(w, r, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	h.pgClient = client
+	h.connMgr.Register("__direct__", connection.Config{
+		Host:     host,
+		Port:     port,
+		User:     user,
+		Password: password,
+		Database: db,
+	})
+	h.connMgr.Activate("__direct__")
+
 	version, _ := client.GetVersion()
 	dataDir, _ := client.GetPGDataDir()
 
@@ -320,7 +320,8 @@ func (h *Handler) ServeExecute(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, r, http.StatusMethodNotAllowed, "POST required")
 		return
 	}
-	if h.pgClient == nil {
+	_, client := h.connMgr.GetActive()
+	if client == nil {
 		h.writeError(w, r, http.StatusServiceUnavailable, "not connected to PostgreSQL")
 		return
 	}
@@ -342,7 +343,7 @@ func (h *Handler) ServeExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.pgClient.Execute(req.SQL)
+	result, err := client.Execute(req.SQL)
 	if err != nil {
 		h.writeError(w, r, http.StatusOK, err.Error())
 		return
@@ -983,14 +984,15 @@ func (h *Handler) ServeSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.pgClient == nil {
+	_, client := h.connMgr.GetActive()
+	if client == nil {
 		h.writeError(w, r, http.StatusServiceUnavailable, "no database connection")
 		return
 	}
 
 	// Query backend processes via Execute (the only public method)
 	// Note: PG 18 renamed columns — no "xid" column; use backend_xid, backend_xmin
-	rows, err := h.pgClient.Execute(`
+	rows, err := client.Execute(`
 		SELECT pid, usename, datname, state, query_start, backend_xid, backend_xmin, backend_type,
 		       coalesce(wait_event_type,'') as wait_event_type, coalesce(wait_event,'') as wait_event,
 		       left(coalesce(query,'<idle>'), 200) as query
@@ -1015,7 +1017,7 @@ func (h *Handler) ServeSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Query lock information
-	lrows, err := h.pgClient.Execute(`
+	lrows, err := client.Execute(`
 		SELECT coalesce(locktype,'') as locktype, coalesce(relation::text,'') as relation,
 		       coalesce(virtualxid,'') as virtualxid, coalesce(transactionid::text,'') as transactionid,
 		       coalesce(mode,'') as mode, coalesce(granted::text,'') as granted,
@@ -1041,7 +1043,7 @@ func (h *Handler) ServeSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	// Current XID
 	var currentXid int64
-	if xid, err := h.pgClient.GetCurrentXid(); err == nil {
+	if xid, err := client.GetCurrentXid(); err == nil {
 		currentXid = int64(xid)
 	}
 
@@ -1072,7 +1074,6 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	mux.HandleFunc("/api/projects", h.ServeProjectList)
 	mux.HandleFunc("/api/projects/", h.ServeProjectByID)
 	mux.HandleFunc("/api/clusters/", h.ServeClusterByID)
-	mux.HandleFunc("/api/nodes/", h.ServeNodeByID)
 	mux.HandleFunc("/api/cluster/overview", h.ServeClusterOverview)
 	mux.HandleFunc("/api/cluster/node/inspect", h.ServeClusterNodeInspect)
 	mux.HandleFunc("/api/wal", h.ServeWAL)
@@ -1091,13 +1092,42 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	mux.HandleFunc("/api/discovery/dsn/validate", h.ServeDiscoveryDSNValidate)
 	mux.HandleFunc("/api/discovery/dsn/import", h.ServeDiscoveryDSNImport)
 	mux.HandleFunc("/ws", h.ServeWS)
+
+	// Node activation/deactivation/register/status dispatcher
+	mux.HandleFunc("/api/nodes/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			if strings.HasSuffix(r.URL.Path, "/activate") {
+				h.ServeNodeActivate(w, r)
+				return
+			}
+			if strings.HasSuffix(r.URL.Path, "/deactivate") {
+				h.ServeNodeDeactivate(w, r)
+				return
+			}
+			if strings.HasSuffix(r.URL.Path, "/register") {
+				h.ServeNodeRegister(w, r)
+				return
+			}
+			h.writeError(w, r, http.StatusNotFound, "not found")
+		case http.MethodGet:
+			if strings.HasSuffix(r.URL.Path, "/status") {
+				h.ServeNodeStatus(w, r)
+				return
+			}
+			h.ServeNodeByID(w, r)
+		default:
+			h.writeError(w, r, http.StatusMethodNotAllowed, "POST/GET required")
+		}
+	})
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 func (h *Handler) pgDataDir() string {
-	if h.pgClient != nil {
-		if dataDir, err := h.pgClient.GetPGDataDir(); err == nil && dataDir != "" {
+	_, client := h.connMgr.GetActive()
+	if client != nil {
+		if dataDir, err := client.GetPGDataDir(); err == nil && dataDir != "" {
 			if _, err := os.Stat(dataDir); err == nil {
 				return dataDir
 			}
@@ -1113,9 +1143,10 @@ func (h *Handler) resolveXidRange(r *http.Request) (uint32, uint32) {
 		return startXid, endXid
 	}
 
-	// Try pgClient first
-	if h.pgClient != nil {
-		if xid, err := h.pgClient.GetCurrentXid(); err == nil && xid > 0 {
+	// Try active client first
+	_, client := h.connMgr.GetActive()
+	if client != nil {
+		if xid, err := client.GetCurrentXid(); err == nil && xid > 0 {
 			end := uint32(xid)
 			start := uint32(0)
 			if end > 255 {

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"pg-visualizer-backend/internal/connection"
 	"pg-visualizer-backend/internal/pg"
 )
 
@@ -535,11 +536,14 @@ func (h *Handler) tryConnectNode(node workspaceNode) error {
 	if err := client.Connect(node.Host, node.Port, node.User, node.Password, node.Database); err != nil {
 		return err
 	}
-	if h.pgClient != nil {
-		_ = h.pgClient.Close()
-	}
-	h.pgClient = client
-	return nil
+	h.connMgr.Register(node.ID, connection.Config{
+		Host:     node.Host,
+		Port:     node.Port,
+		User:     node.User,
+		Password: node.Password,
+		Database: node.Database,
+	})
+	return h.connMgr.Activate(node.ID)
 }
 
 func parseDSN(dsn string) (host string, port int, user, pass, db string, err error) {
