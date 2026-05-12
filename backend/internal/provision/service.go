@@ -80,7 +80,11 @@ func (s *Service) GetProvider(id string) (Provider, bool) {
 // StartSingle starts a single-node PostgreSQL instance.
 func (s *Service) StartSingle(ctx context.Context, spec InstanceSpec, providerID string) (InstanceInfo, error) {
 	if spec.Port == 0 {
-		spec.Port = s.findAvailablePort()
+		port, err := s.findAvailablePort()
+		if err != nil {
+			return InstanceInfo{}, err
+		}
+		spec.Port = port
 	}
 
 	p, ok := s.providers[providerID]
@@ -99,12 +103,12 @@ func (s *Service) StartSingle(ctx context.Context, spec InstanceSpec, providerID
 func (s *Service) StopInstance(ctx context.Context, info InstanceInfo) error {
 	p, ok := s.providers[info.ProviderID]
 	if !ok {
-		return fmt.Errorf("unknown provider: %s", info.ProviderID)
+		return &ErrProviderUnavailable{Provider: info.ProviderID, Reason: "not registered"}
 	}
 	return p.Stop(ctx, info)
 }
 
-func (s *Service) findAvailablePort() int {
+func (s *Service) findAvailablePort() (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -113,11 +117,11 @@ func (s *Service) findAvailablePort() int {
 	for i := 0; i < 100; i++ {
 		if isPortAvailable(port) {
 			s.defaultPort = port + 1
-			return port
+			return port, nil
 		}
 		port++
 	}
-	return 0 // no available port found
+	return 0, &ErrPortConflict{Port: 0} // no available port found
 }
 
 func isPortAvailable(port int) bool {
