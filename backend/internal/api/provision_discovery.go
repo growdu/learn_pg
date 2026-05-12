@@ -15,6 +15,7 @@ import (
 
 	"pg-visualizer-backend/internal/connection"
 	"pg-visualizer-backend/internal/pg"
+	"pg-visualizer-backend/internal/provision"
 )
 
 type provisionRuntime struct {
@@ -23,10 +24,11 @@ type provisionRuntime struct {
 }
 
 type provisionSingleRequest struct {
-	ProjectID   string           `json:"projectId"`
-	ClusterName string           `json:"clusterName"`
-	Template    string           `json:"template"`
-	Runtime     provisionRuntime `json:"runtime"`
+	ProjectID    string           `json:"projectId"`
+	ClusterName  string           `json:"clusterName"`
+	Template     string           `json:"template"`
+	Runtime      provisionRuntime `json:"runtime"`
+	ProviderType string           `json:"providerType"` // "docker" | "local"
 }
 
 type provisionReplicaRequest struct {
@@ -129,24 +131,80 @@ func (h *Handler) ServeProvisionSingle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	taskID := genID("task")
+	clusterID := genID("cluster")
+	nodeID := genID("node")
+
+	// Step 1: Create task (progress 5)
+	h.setProvisionTask(provisionTask{
+		TaskID:    taskID,
+		Status:    "running",
+		Progress:  5,
+		Message:   "starting single-node provision",
+		ProjectID: req.ProjectID,
+		ClusterID: clusterID,
+		StartedAt: time.Now().UnixMilli(),
+	})
+
+	// Step 2: Build InstanceSpec (ProviderType defaults to "docker")
+	providerType := orDefaultStr(req.ProviderType, "docker")
+	spec := provision.InstanceSpec{
+		Name:      orDefaultStr(strings.TrimSpace(req.ClusterName), "单机集群"),
+		PGVersion: orDefaultStr(req.Runtime.PGVersion, "16"),
+		Port:      orDefaultInt(h.config.PGPort, 5432),
+		DataDir:   "",
+		Env:       nil,
+	}
+
+	// Step 3: Call provisionService.StartSingle (progress 10-70)
+	h.setProvisionTask(provisionTask{
+		TaskID:    taskID,
+		Status:    "running",
+		Progress:  10,
+		Message:   "provisioning PostgreSQL instance",
+		ProjectID: req.ProjectID,
+		ClusterID: clusterID,
+		StartedAt: time.Now().UnixMilli(),
+	})
+
+	ctx := r.Context()
+	info, err := h.provisionService.StartSingle(ctx, spec, providerType)
+	if err != nil {
+		// Step 4: On error, set task failed (no cleanup needed - instance not started)
+		h.setProvisionTask(provisionTask{
+			TaskID:     taskID,
+			Status:     "failed",
+			Progress:   100,
+			Message:    "provision failed: " + err.Error(),
+			ProjectID:  req.ProjectID,
+			ClusterID:  clusterID,
+			StartedAt:  time.Now().UnixMilli(),
+			FinishedAt: time.Now().UnixMilli(),
+			Error:      err.Error(),
+		})
+		h.writeError(w, r, 500, "provision failed: "+err.Error())
+		return
+	}
+
+	// Build cluster with actual host/port from InstanceInfo
 	cluster := workspaceCluster{
-		ID:              genID("cluster"),
+		ID:              clusterID,
 		Name:            orDefaultStr(strings.TrimSpace(req.ClusterName), "单机集群"),
 		ReplicationType: "physical",
 		ProvisionMode:   "single",
 		Runtime: &workspaceRuntime{
 			Type:      orDefaultStr(req.Runtime.Type, "local"),
-			PGVersion: req.Runtime.PGVersion,
+			PGVersion: spec.PGVersion,
 		},
 		AlertThresholdSec: 30,
 		Nodes: []workspaceNode{
 			{
-				ID:          genID("node"),
+				ID:          nodeID,
 				Name:        "node-1",
-				Host:        orDefaultStr(h.config.PGHost, "127.0.0.1"),
-				Port:        orDefaultInt(h.config.PGPort, 5432),
+				Host:        info.Host,
+				Port:        info.Port,
 				User:        orDefaultStr(h.config.PGUser, "postgres"),
-				Password:    h.config.PGPassword,
+				Password:    orDefaultStr(h.config.PGPassword, "postgres"),
 				Database:    orDefaultStr(h.config.PGDatabase, "postgres"),
 				ClusterType: "physical",
 				Role:        "primary",
@@ -154,36 +212,42 @@ func (h *Handler) ServeProvisionSingle(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 	}
-	taskID := genID("task")
+
+	// Step 6: Save cluster to workspace (progress 70)
 	h.setProvisionTask(provisionTask{
 		TaskID:    taskID,
 		Status:    "running",
-		Progress:  20,
-		Message:   "creating single-node cluster",
+		Progress:  70,
+		Message:   "saving cluster to workspace",
 		ProjectID: req.ProjectID,
 		ClusterID: cluster.ID,
 		StartedAt: time.Now().UnixMilli(),
 	})
 
 	if err := h.workspace.appendCluster(req.ProjectID, cluster); err != nil {
+		// Cleanup instance on workspace save failure
+		_ = h.provisionService.StopInstance(ctx, info)
 		h.setProvisionTask(provisionTask{
 			TaskID:     taskID,
 			Status:     "failed",
 			Progress:   100,
-			Message:    err.Error(),
+			Message:    "failed to save cluster: " + err.Error(),
 			ProjectID:  req.ProjectID,
 			ClusterID:  cluster.ID,
 			StartedAt:  time.Now().UnixMilli(),
 			FinishedAt: time.Now().UnixMilli(),
+			Error:      err.Error(),
 		})
 		h.writeError(w, r, 400, err.Error())
 		return
 	}
+
+	// Step 7: Try connect node (progress 90)
 	h.setProvisionTask(provisionTask{
 		TaskID:    taskID,
 		Status:    "running",
-		Progress:  80,
-		Message:   "cluster metadata created, testing connection",
+		Progress:  90,
+		Message:   "connecting to node",
 		ProjectID: req.ProjectID,
 		ClusterID: cluster.ID,
 		StartedAt: time.Now().UnixMilli(),
@@ -196,14 +260,7 @@ func (h *Handler) ServeProvisionSingle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, r, 200, provisionResponse{
-		Success:             true,
-		ProjectID:           req.ProjectID,
-		ClusterID:           cluster.ID,
-		NodeIDs:             []string{cluster.Nodes[0].ID},
-		AutoConnectedNodeID: autoConnected,
-		TaskID:              taskID,
-	})
+	// Step 8: Set task success (progress 100)
 	h.setProvisionTask(provisionTask{
 		TaskID:     taskID,
 		Status:     "success",
@@ -213,6 +270,16 @@ func (h *Handler) ServeProvisionSingle(w http.ResponseWriter, r *http.Request) {
 		ClusterID:  cluster.ID,
 		StartedAt:  time.Now().UnixMilli(),
 		FinishedAt: time.Now().UnixMilli(),
+	})
+
+	// Step 9: Return provisionResponse
+	writeJSON(w, r, 200, provisionResponse{
+		Success:             true,
+		ProjectID:           req.ProjectID,
+		ClusterID:           cluster.ID,
+		NodeIDs:             []string{cluster.Nodes[0].ID},
+		AutoConnectedNodeID: autoConnected,
+		TaskID:              taskID,
 	})
 }
 

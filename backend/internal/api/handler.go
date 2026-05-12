@@ -18,6 +18,7 @@ import (
 	"pg-visualizer-backend/internal/config"
 	"pg-visualizer-backend/internal/middleware"
 	"pg-visualizer-backend/internal/pg"
+	"pg-visualizer-backend/internal/provision"
 	"pg-visualizer-backend/internal/ws"
 	"pg-visualizer-backend/pkg/clog"
 	"pg-visualizer-backend/pkg/wal"
@@ -25,25 +26,30 @@ import (
 
 // Handler holds API dependencies
 type Handler struct {
-	config    *config.Config
-	hub       *ws.Hub
-	connMgr   *connection.Manager
-	workspace *workspaceStore
-	taskMu    sync.Mutex
-	tasks     map[string]provisionTask
-	taskPath  string
+	config           *config.Config
+	hub              *ws.Hub
+	connMgr          *connection.Manager
+	workspace        *workspaceStore
+	provisionService *provision.Service
+	taskMu           sync.Mutex
+	tasks            map[string]provisionTask
+	taskPath         string
 }
 
 // NewHandler creates a new API handler
 func NewHandler(cfg *config.Config, hub *ws.Hub, connMgr *connection.Manager) *Handler {
 	h := &Handler{
-		config:    cfg,
-		hub:       hub,
-		connMgr:   connMgr,
-		workspace: newWorkspaceStore(defaultWorkspaceFilePath()),
-		tasks:     make(map[string]provisionTask),
-		taskPath:  defaultProvisionTaskFilePath(),
+		config:           cfg,
+		hub:              hub,
+		connMgr:          connMgr,
+		workspace:        newWorkspaceStore(defaultWorkspaceFilePath()),
+		provisionService: provision.NewService(),
+		tasks:            make(map[string]provisionTask),
+		taskPath:         defaultProvisionTaskFilePath(),
 	}
+	// Register providers
+	h.provisionService.RegisterProvider(&provision.DockerProvider{})
+	h.provisionService.RegisterProvider(&provision.LocalProvider{})
 	h.loadProvisionTasks()
 	return h
 }
