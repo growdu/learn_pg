@@ -3,7 +3,9 @@ package provision
 import (
 	"context"
 	"fmt"
+	"net"
 	"sync"
+	"time"
 )
 
 // InstanceSpec defines the specification for a PostgreSQL instance.
@@ -32,6 +34,42 @@ type Provider interface {
 	ID() string
 }
 
+// ReplicationSpec defines the specification for primary/standby or logical replication.
+type ReplicationSpec struct {
+	Name         string
+	Type         string // "physical" | "logical"
+	PGVersion    string // "18", "16"
+	PrimaryPort  int
+	SecondaryPort int
+	ProviderID   string
+}
+
+// ReplicaInfo contains the runtime information of a started replica.
+type ReplicaInfo struct {
+	ProviderID     string
+	ComposeProject string // docker compose project name
+	PrimaryInfo    InstanceInfo
+	SecondaryInfo  InstanceInfo
+	LAG            string // replication lag
+}
+
+// ReplicationStatus represents the status of replication.
+type ReplicationStatus struct {
+	PrimaryConnected    bool
+	SecondaryConnected  bool
+	ReplicationWorking bool
+	LAG                 string
+	LastHeartbeat       int64
+}
+
+// ReplicationProvider extends Provider to support replication.
+type ReplicationProvider interface {
+	Provider
+	StartReplica(ctx context.Context, spec ReplicationSpec, primaryInfo InstanceInfo) (ReplicaInfo, error)
+	StopReplica(ctx context.Context, replicaInfo ReplicaInfo) error
+	GetReplicationStatus(ctx context.Context, replicaInfo ReplicaInfo) (ReplicationStatus, error)
+}
+
 // ErrProviderUnavailable is returned when the provider is not available.
 type ErrProviderUnavailable struct {
 	Provider string
@@ -53,16 +91,18 @@ func (e *ErrPortConflict) Error() string {
 
 // Service manages provisioning of PostgreSQL instances.
 type Service struct {
-	providers   map[string]Provider
-	defaultPort  int
-	mu           sync.Mutex
+	providers            map[string]Provider
+	replicationProviders map[string]ReplicationProvider
+	defaultPort          int
+	mu                   sync.Mutex
 }
 
 // NewService creates a new ProvisionService.
 func NewService() *Service {
 	return &Service{
-		providers:  make(map[string]Provider),
-		defaultPort: 5432,
+		providers:            make(map[string]Provider),
+		replicationProviders: make(map[string]ReplicationProvider),
+		defaultPort:          5432,
 	}
 }
 
@@ -74,6 +114,17 @@ func (s *Service) RegisterProvider(p Provider) {
 // GetProvider returns a provider by ID.
 func (s *Service) GetProvider(id string) (Provider, bool) {
 	p, ok := s.providers[id]
+	return p, ok
+}
+
+// RegisterReplicationProvider registers a replication provider by ID.
+func (s *Service) RegisterReplicationProvider(p ReplicationProvider) {
+	s.replicationProviders[p.ID()] = p
+}
+
+// GetReplicationProvider returns a replication provider by ID.
+func (s *Service) GetReplicationProvider(id string) (ReplicationProvider, bool) {
+	p, ok := s.replicationProviders[id]
 	return p, ok
 }
 
@@ -127,4 +178,23 @@ func (s *Service) findAvailablePort() (int, error) {
 func isPortAvailable(port int) bool {
 	// Simple check - in real impl would try to bind
 	return true // placeholder
+}
+
+// waitForPostgres waits for PostgreSQL to be ready at the given host:port.
+func waitForPostgres(ctx context.Context, host string, port int) error {
+	addr := fmt.Sprintf("%s:%d", host, port)
+	for i := 0; i < 30; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		conn, err := net.DialTimeout("tcp", addr, time.Second)
+		if err == nil {
+			conn.Close()
+			return nil
+		}
+		time.Sleep(time.Second)
+	}
+	return fmt.Errorf("postgres not ready at %s", addr)
 }
