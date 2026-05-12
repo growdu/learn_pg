@@ -90,7 +90,7 @@ type workspaceSSHHint struct {
 type workspaceEnvelope struct {
 	SchemaVersion int                  `json:"schemaVersion"`
 	Projects      []workspaceProject   `json:"projects"`
-	Hosts         []workspaceHost      `json:"hosts"` // 新增
+	Hosts         []workspaceHost      `json:"hosts"` // added
 }
 
 type workspaceStore struct {

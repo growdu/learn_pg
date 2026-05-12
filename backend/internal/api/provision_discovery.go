@@ -104,12 +104,12 @@ type provisionTask struct {
 	Status     string   `json:"status"`     // "pending" | "running" | "success" | "failed"
 	Progress   int      `json:"progress"`   // 0-100
 	Message    string   `json:"message,omitempty"`
-	Result     string   `json:"result,omitempty"`   // 新增：结果摘要
-	Logs       string   `json:"logs,omitempty"`     // 新增：完整日志
+	Result     string   `json:"result,omitempty"`   // added: result summary
+	Logs       string   `json:"logs,omitempty"`     // added: full logs
 	ProjectID  string   `json:"projectId,omitempty"`
 	ClusterID  string   `json:"clusterId,omitempty"`
-	NodeIDs    []string `json:"nodeIds,omitempty"`  // 新增
-	Error      string   `json:"error,omitempty"`    // 新增
+	NodeIDs    []string `json:"nodeIds,omitempty"`  // added
+	Error      string   `json:"error,omitempty"`    // added
 	StartedAt  int64    `json:"startedAt,omitempty"`
 	FinishedAt int64    `json:"finishedAt,omitempty"`
 }
