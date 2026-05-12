@@ -99,14 +99,19 @@ type dsnImportRequest struct {
 }
 
 type provisionTask struct {
-	TaskID     string `json:"taskId"`
-	Status     string `json:"status"`
-	Progress   int    `json:"progress"`
-	Message    string `json:"message,omitempty"`
-	ProjectID  string `json:"projectId,omitempty"`
-	ClusterID  string `json:"clusterId,omitempty"`
-	StartedAt  int64  `json:"startedAt,omitempty"`
-	FinishedAt int64  `json:"finishedAt,omitempty"`
+	TaskID     string   `json:"taskId"`
+	TaskType   string   `json:"taskType"`   // "provision.single" | "provision.physical" | "provision.logical" | "discovery.scan" | "discovery.import"
+	Status     string   `json:"status"`     // "pending" | "running" | "success" | "failed"
+	Progress   int      `json:"progress"`   // 0-100
+	Message    string   `json:"message,omitempty"`
+	Result     string   `json:"result,omitempty"`   // 新增：结果摘要
+	Logs       string   `json:"logs,omitempty"`     // 新增：完整日志
+	ProjectID  string   `json:"projectId,omitempty"`
+	ClusterID  string   `json:"clusterId,omitempty"`
+	NodeIDs    []string `json:"nodeIds,omitempty"`  // 新增
+	Error      string   `json:"error,omitempty"`    // 新增
+	StartedAt  int64    `json:"startedAt,omitempty"`
+	FinishedAt int64    `json:"finishedAt,omitempty"`
 }
 
 func (h *Handler) ServeProvisionSingle(w http.ResponseWriter, r *http.Request) {

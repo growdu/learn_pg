@@ -8,9 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
-const currentWorkspaceSchemaVersion = 1
+const currentWorkspaceSchemaVersion = 2
 
 // maskedPassword is used in API responses so passwords are never exposed to the frontend.
 const maskedPassword = "********"
@@ -52,6 +53,16 @@ type workspaceComponent struct {
 	LinkedClusterIDs []string `json:"linkedClusterIds"`
 }
 
+type workspaceHost struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	SSHUser   string `json:"sshUser"`
+	SSHKey    string `json:"sshKey,omitempty"`
+	CreatedAt int64  `json:"createdAt"`
+}
+
 type workspaceProject struct {
 	ID         string               `json:"id"`
 	Name       string               `json:"name"`
@@ -77,8 +88,9 @@ type workspaceSSHHint struct {
 }
 
 type workspaceEnvelope struct {
-	SchemaVersion int                `json:"schemaVersion"`
-	Projects      []workspaceProject `json:"projects"`
+	SchemaVersion int                  `json:"schemaVersion"`
+	Projects      []workspaceProject   `json:"projects"`
+	Hosts         []workspaceHost      `json:"hosts"` // 新增
 }
 
 type workspaceStore struct {
@@ -495,6 +507,99 @@ func (s *workspaceStore) DeleteNodeLocked(projectID, clusterID, nodeID string) e
 		return fmt.Errorf("cluster not found: %s", clusterID)
 	}
 	return fmt.Errorf("project not found: %s", projectID)
+}
+
+// ReadHosts returns all hosts from workspace.
+func (s *workspaceStore) ReadHosts() ([]workspaceHost, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	env, err := s.readEnvelopeNoLock()
+	if err != nil {
+		return nil, err
+	}
+	return env.Hosts, nil
+}
+
+// WriteHosts saves the hosts array to workspace.
+func (s *workspaceStore) WriteHosts(hosts []workspaceHost) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	env, err := s.readEnvelopeNoLock()
+	if err != nil {
+		return err
+	}
+	env.Hosts = hosts
+	return s.writeEnvelopeLocked(env)
+}
+
+// AppendHost adds a new host, returns the host with generated ID.
+func (s *workspaceStore) AppendHost(host workspaceHost) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	env, err := s.readEnvelopeNoLock()
+	if err != nil {
+		return err
+	}
+	if host.ID == "" {
+		host.ID = fmt.Sprintf("host-%d", time.Now().UnixNano())
+	}
+	if host.CreatedAt == 0 {
+		host.CreatedAt = time.Now().UnixMilli()
+	}
+	env.Hosts = append(env.Hosts, host)
+	return s.writeEnvelopeLocked(env)
+}
+
+// GetHost returns a single host by ID.
+func (s *workspaceStore) GetHost(id string) (*workspaceHost, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	env, err := s.readEnvelopeNoLock()
+	if err != nil {
+		return nil, err
+	}
+	for i := range env.Hosts {
+		if env.Hosts[i].ID == id {
+			return &env.Hosts[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// UpdateHost updates a host by ID via patch callback.
+func (s *workspaceStore) UpdateHost(id string, patch func(*workspaceHost) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	env, err := s.readEnvelopeNoLock()
+	if err != nil {
+		return err
+	}
+	for i := range env.Hosts {
+		if env.Hosts[i].ID == id {
+			if err := patch(&env.Hosts[i]); err != nil {
+				return err
+			}
+			return s.writeEnvelopeLocked(env)
+		}
+	}
+	return fmt.Errorf("host not found: %s", id)
+}
+
+// DeleteHost deletes a host by ID.
+func (s *workspaceStore) DeleteHost(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	env, err := s.readEnvelopeNoLock()
+	if err != nil {
+		return err
+	}
+	for i := range env.Hosts {
+		if env.Hosts[i].ID == id {
+			env.Hosts = append(env.Hosts[:i], env.Hosts[i+1:]...)
+			return s.writeEnvelopeLocked(env)
+		}
+	}
+	return fmt.Errorf("host not found: %s", id)
 }
 
 // MaskNode returns a copy of the node with password masked for API responses.
