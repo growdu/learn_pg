@@ -1191,6 +1191,14 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 			h.writeError(w, r, http.StatusMethodNotAllowed, "POST/GET required")
 		}
 	})
+
+	// Host CRUD
+	mux.HandleFunc("/api/hosts", h.ServeHostList)
+	mux.HandleFunc("/api/hosts/", h.ServeHostByID)
+
+	// Task list/detail
+	mux.HandleFunc("/api/tasks", h.ServeTaskList)
+	mux.HandleFunc("/api/tasks/", h.ServeTaskByID)
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
