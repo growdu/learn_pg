@@ -249,6 +249,7 @@
 - 2026-05-12：M4 完成 — WorkspaceHost 类型、Hosts 数组、provisionTask 字段补全、Host/Task CRUD API、前端类型。
 - 2026-05-12：M5 完成 — ProvisionService Provider 抽象、DockerProvider、LocalProvider、ServeProvisionSingle 重构、ServeClusterTeardown 端点、前端 Task 面板。
 - 2026-05-12：M1 完成 — workspace_store 增量读写、workspace_crud 资源式 CRUD、API 密码脱敏返回、前端移除 localStorage workspace/profile 持久化。
+- 2026-05-12：M6 完成 — ReplicationProvider 接口、DockerCompose 多容器编排、物理/逻辑复制集群启动、前端复制拓扑图。
 
 ## 9. 当前进度摘要
 
@@ -258,6 +259,7 @@
 - M3：100%（已完成）
 - M4：100%（已完成）
 - M5：100%（已完成）
+- M6：100%（已完成）
 - M6：0%（未开始）
 - M7：0%（未开始）
 - M8：0%（未开始）
