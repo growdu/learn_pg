@@ -385,6 +385,15 @@ body {
   border-color: rgba(248, 81, 73, 0.3);
 }
 
+.task-panel-toggle {
+  font-size: var(--font-sm);
+}
+
+.task-panel-toggle:hover {
+  background: var(--bg-hover);
+  border-color: var(--text-muted);
+}
+
 /* ===== Breadcrumb ===== */
 .breadcrumb {
   padding: 0.6rem 1rem;

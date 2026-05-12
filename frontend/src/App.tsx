@@ -149,14 +149,11 @@ async function listProvisionTasks(
   status: 'all' | 'running' | 'success' | 'failed' = 'all',
 ): Promise<Array<{ taskId: string; status: string; progress: number; message?: string; startedAt?: number; finishedAt?: number; projectId?: string; clusterId?: string }>> {
   try {
-    const res = await fetch(`/api/provision/tasks?limit=${limit}&status=${status}`)
+    const res = await fetch(`/api/tasks?limit=${limit}&status=${status === 'all' ? '' : status}`)
     if (!res.ok) return []
-    const data = (await res.json()) as {
-      success?: boolean
-      tasks?: Array<{ taskId?: string; status?: string; progress?: number; message?: string; startedAt?: number; finishedAt?: number; projectId?: string; clusterId?: string }>
-    }
+    const data = await res.json()
     if (!data.success || !Array.isArray(data.tasks)) return []
-    return data.tasks.map((t) => ({
+    return data.tasks.map((t: { taskId?: string; status?: string; progress?: number; message?: string; startedAt?: number; finishedAt?: number; projectId?: string; clusterId?: string }) => ({
       taskId: t.taskId || '-',
       status: t.status || 'unknown',
       progress: t.progress ?? 0,
@@ -869,6 +866,24 @@ function App() {
               : `节点工作区 / ${selectedNodeConfig ? `${selectedNodeConfig.name} (${selectedNodeConfig.role})` : nodeLabel}`}
           </div>
           {renderView()}
+        <button
+          className="task-panel-toggle"
+          onClick={() => setShowRecentTasks(!showRecentTasks)}
+          style={{
+            position: 'fixed',
+            right: '1rem',
+            top: '4rem',
+            zIndex: 99,
+            padding: '0.5rem 0.9rem',
+            background: 'var(--bg-secondary)',
+            border: '1px solid var(--border)',
+            borderRadius: '6px',
+            color: 'var(--text)',
+            cursor: 'pointer',
+          }}
+        >
+          任务 {recentTasks.filter(t => t.status === 'running').length > 0 && `(${recentTasks.filter(t => t.status === 'running').length})`}
+        </button>
         </main>
       <StatusBar collectorMode={collectorMode} connected={connected} eventCount={eventCount} lastEventType={lastEventType} wsConnected={wsConnected} />
       {showTemplateDialog && (
