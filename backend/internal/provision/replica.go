@@ -29,6 +29,16 @@ func (p *DockerReplicationProvider) ID() string {
 	return "docker-replication"
 }
 
+// Start implements Provider but is not used for replication clusters.
+func (p *DockerReplicationProvider) Start(ctx context.Context, spec InstanceSpec) (InstanceInfo, error) {
+	return InstanceInfo{}, fmt.Errorf("use StartReplica for replication clusters")
+}
+
+// Stop implements Provider but is not used for replication clusters.
+func (p *DockerReplicationProvider) Stop(ctx context.Context, info InstanceInfo) error {
+	return fmt.Errorf("use StopReplica for replication clusters")
+}
+
 // StartReplica starts a primary/standby or logical replication cluster.
 func (p *DockerReplicationProvider) StartReplica(ctx context.Context, spec ReplicationSpec, primaryInfo InstanceInfo) (ReplicaInfo, error) {
 	// Generate project name: pgv-replica-{spec.Name}-{unix timestamp}

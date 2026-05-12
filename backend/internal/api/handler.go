@@ -50,6 +50,7 @@ func NewHandler(cfg *config.Config, hub *ws.Hub, connMgr *connection.Manager) *H
 	// Register providers
 	h.provisionService.RegisterProvider(&provision.DockerProvider{})
 	h.provisionService.RegisterProvider(&provision.LocalProvider{})
+	h.provisionService.RegisterReplicationProvider(provision.NewDockerReplicationProvider("data"))
 	h.loadProvisionTasks()
 	return h
 }
