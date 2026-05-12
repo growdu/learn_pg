@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -35,6 +36,22 @@ type provisionReplicaRequest struct {
 	ProjectID   string           `json:"projectId"`
 	ClusterName string           `json:"clusterName"`
 	Runtime     provisionRuntime `json:"runtime"`
+}
+
+// ReplicaProvisionRequest 主备/逻辑复制请求
+type ReplicaProvisionRequest struct {
+	ProjectID   string `json:"projectId"`
+	ClusterName string `json:"clusterName"`
+	Type        string `json:"type"` // "physical" | "logical"
+	Runtime     RuntimeConfig `json:"runtime"`
+}
+
+// RuntimeConfig 运行时配置
+type RuntimeConfig struct {
+	Type          string `json:"type"`    // "docker"
+	PGVersion     string `json:"pgVersion"`
+	PrimaryPort   int    `json:"primaryPort"`
+	SecondaryPort int    `json:"secondaryPort"`
 }
 
 type provisionResponse struct {
@@ -284,21 +301,35 @@ func (h *Handler) ServeProvisionSingle(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ServeProvisionPhysical(w http.ResponseWriter, r *http.Request) {
-	h.serveProvisionReplica(w, r, "physical")
+	var req ReplicaProvisionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, r, 400, "invalid JSON")
+		return
+	}
+	req.Type = "physical"
+	h.serveProvisionReplica(w, r, req)
 }
 
 func (h *Handler) ServeProvisionLogical(w http.ResponseWriter, r *http.Request) {
-	h.serveProvisionReplica(w, r, "logical")
+	var req ReplicaProvisionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, r, 400, "invalid JSON")
+		return
+	}
+	req.Type = "logical"
+	h.serveProvisionReplica(w, r, req)
 }
 
-func (h *Handler) serveProvisionReplica(w http.ResponseWriter, r *http.Request, mode string) {
+func (h *Handler) serveProvisionReplica(w http.ResponseWriter, r *http.Request, req ReplicaProvisionRequest) {
 	if r.Method != "POST" {
 		h.writeError(w, r, 405, "POST required")
 		return
 	}
-	var req provisionReplicaRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.writeError(w, r, 400, "invalid JSON")
+
+	// Validate type
+	replType := strings.ToLower(strings.TrimSpace(req.Type))
+	if replType != "physical" && replType != "logical" {
+		h.writeError(w, r, 400, "type must be 'physical' or 'logical'")
 		return
 	}
 	if strings.TrimSpace(req.ProjectID) == "" {
@@ -306,48 +337,204 @@ func (h *Handler) serveProvisionReplica(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	clusterType := "physical"
+	// Determine roles based on type
+	clusterType := replType
 	roleA, roleB := "primary", "standby"
 	name := "物理复制集群"
-	if mode == "logical" {
-		clusterType = "logical"
+	if replType == "logical" {
 		roleA, roleB = "publisher", "subscriber"
 		name = "逻辑复制集群"
 	}
 
-	basePort := orDefaultInt(h.config.PGPort, 5432)
+	// IDs
 	taskID := genID("task")
+	clusterID := genID("cluster")
+	primaryNodeID := genID("node")
+	standbyNodeID := genID("node")
+
+	// Step 1: Create task (progress 5)
+	h.setProvisionTask(provisionTask{
+		TaskID:    taskID,
+		TaskType:  "provision." + replType,
+		Status:    "running",
+		Progress:  5,
+		Message:   "starting " + name,
+		ProjectID: req.ProjectID,
+		ClusterID: clusterID,
+		StartedAt: time.Now().UnixMilli(),
+	})
+
+	// Step 2: Build InstanceSpec for primary
+	providerType := orDefaultStr(req.Runtime.Type, "docker")
+	primaryPort := req.Runtime.PrimaryPort
+	if primaryPort == 0 {
+		primaryPort = orDefaultInt(h.config.PGPort, 5432)
+	}
+	spec := provision.InstanceSpec{
+		Name:      orDefaultStr(strings.TrimSpace(req.ClusterName), name),
+		PGVersion: orDefaultStr(req.Runtime.PGVersion, "16"),
+		Port:      primaryPort,
+		DataDir:   "",
+		Env:       nil,
+	}
+
+	// Step 3: Start primary (progress 10-30)
+	h.setProvisionTask(provisionTask{
+		TaskID:    taskID,
+		TaskType:  "provision." + replType,
+		Status:    "running",
+		Progress:  10,
+		Message:   "starting primary PostgreSQL",
+		ProjectID: req.ProjectID,
+		ClusterID: clusterID,
+		StartedAt: time.Now().UnixMilli(),
+	})
+
+	ctx := r.Context()
+	primaryInfo, err := h.provisionService.StartSingle(ctx, spec, providerType)
+	if err != nil {
+		h.setProvisionTask(provisionTask{
+			TaskID:     taskID,
+			TaskType:   "provision." + replType,
+			Status:     "failed",
+			Progress:   100,
+			Message:    "failed to start primary: " + err.Error(),
+			ProjectID:  req.ProjectID,
+			ClusterID:  clusterID,
+			StartedAt:  time.Now().UnixMilli(),
+			FinishedAt: time.Now().UnixMilli(),
+			Error:      err.Error(),
+		})
+		h.writeError(w, r, 500, "failed to start primary: "+err.Error())
+		return
+	}
+
+	// Step 4: Wait for primary to be ready (progress 30-40)
+	h.setProvisionTask(provisionTask{
+		TaskID:    taskID,
+		TaskType:  "provision." + replType,
+		Status:    "running",
+		Progress:  30,
+		Message:   "waiting for primary to be ready",
+		ProjectID: req.ProjectID,
+		ClusterID: clusterID,
+		StartedAt: time.Now().UnixMilli(),
+	})
+
+	if err := waitForPostgres(ctx, primaryInfo.Host, primaryInfo.Port); err != nil {
+		_ = h.provisionService.StopInstance(ctx, primaryInfo)
+		h.setProvisionTask(provisionTask{
+			TaskID:     taskID,
+			TaskType:   "provision." + replType,
+			Status:     "failed",
+			Progress:   100,
+			Message:    "primary not ready: " + err.Error(),
+			ProjectID:  req.ProjectID,
+			ClusterID:  clusterID,
+			StartedAt:  time.Now().UnixMilli(),
+			FinishedAt: time.Now().UnixMilli(),
+			Error:      err.Error(),
+		})
+		h.writeError(w, r, 500, "primary not ready: "+err.Error())
+		return
+	}
+
+	// Step 5: Get replication provider and start replica (progress 40-60)
+	h.setProvisionTask(provisionTask{
+		TaskID:    taskID,
+		TaskType:  "provision." + replType,
+		Status:    "running",
+		Progress:  40,
+		Message:   "starting standby/subscriber",
+		ProjectID: req.ProjectID,
+		ClusterID: clusterID,
+		StartedAt: time.Now().UnixMilli(),
+	})
+
+	provider, ok := h.provisionService.GetReplicationProvider("docker-replication")
+	if !ok {
+		_ = h.provisionService.StopInstance(ctx, primaryInfo)
+		h.setProvisionTask(provisionTask{
+			TaskID:     taskID,
+			TaskType:   "provision." + replType,
+			Status:     "failed",
+			Progress:   100,
+			Message:    "docker-replication provider not available",
+			ProjectID:  req.ProjectID,
+			ClusterID:  clusterID,
+			StartedAt:  time.Now().UnixMilli(),
+			FinishedAt: time.Now().UnixMilli(),
+			Error:      "docker-replication provider not available",
+		})
+		h.writeError(w, r, 500, "docker-replication provider not available")
+		return
+	}
+
+	secondaryPort := req.Runtime.SecondaryPort
+	if secondaryPort == 0 {
+		secondaryPort = primaryPort + 1
+	}
+
+	replSpec := provision.ReplicationSpec{
+		Name:          orDefaultStr(strings.TrimSpace(req.ClusterName), name),
+		Type:          replType,
+		PGVersion:     orDefaultStr(req.Runtime.PGVersion, "16"),
+		PrimaryPort:   primaryInfo.Port,
+		SecondaryPort: secondaryPort,
+		ProviderID:    "docker-replication",
+	}
+
+	replicaInfo, err := provider.StartReplica(ctx, replSpec, primaryInfo)
+	if err != nil {
+		_ = h.provisionService.StopInstance(ctx, primaryInfo)
+		h.setProvisionTask(provisionTask{
+			TaskID:     taskID,
+			TaskType:   "provision." + replType,
+			Status:     "failed",
+			Progress:   100,
+			Message:    "failed to start replica: " + err.Error(),
+			ProjectID:  req.ProjectID,
+			ClusterID:  clusterID,
+			StartedAt:  time.Now().UnixMilli(),
+			FinishedAt: time.Now().UnixMilli(),
+			Error:      err.Error(),
+		})
+		h.writeError(w, r, 500, "failed to start replica: "+err.Error())
+		return
+	}
+
+	// Step 6: Build cluster and nodes
 	cluster := workspaceCluster{
-		ID:              genID("cluster"),
+		ID:              clusterID,
 		Name:            orDefaultStr(strings.TrimSpace(req.ClusterName), name),
 		ReplicationType: clusterType,
-		ProvisionMode:   mode,
-		ProvisionTaskID: taskID,
+		ProvisionMode:   replType,
+		ProvisionTaskID:  taskID,
 		Runtime: &workspaceRuntime{
-			Type:      orDefaultStr(req.Runtime.Type, "local"),
-			PGVersion: req.Runtime.PGVersion,
+			Type:      providerType,
+			PGVersion: orDefaultStr(req.Runtime.PGVersion, "16"),
 		},
 		AlertThresholdSec: 30,
 		Nodes: []workspaceNode{
 			{
-				ID:          genID("node"),
+				ID:          primaryNodeID,
 				Name:        roleA + "-1",
-				Host:        orDefaultStr(h.config.PGHost, "127.0.0.1"),
-				Port:        basePort,
+				Host:        primaryInfo.Host,
+				Port:        primaryInfo.Port,
 				User:        orDefaultStr(h.config.PGUser, "postgres"),
-				Password:    h.config.PGPassword,
+				Password:    orDefaultStr(h.config.PGPassword, "postgres"),
 				Database:    orDefaultStr(h.config.PGDatabase, "postgres"),
 				ClusterType: clusterType,
 				Role:        roleA,
 				Source:      "provisioned",
 			},
 			{
-				ID:          genID("node"),
+				ID:          standbyNodeID,
 				Name:        roleB + "-1",
-				Host:        orDefaultStr(h.config.PGHost, "127.0.0.1"),
-				Port:        basePort + 1,
+				Host:        replicaInfo.SecondaryInfo.Host,
+				Port:        replicaInfo.SecondaryInfo.Port,
 				User:        orDefaultStr(h.config.PGUser, "postgres"),
-				Password:    h.config.PGPassword,
+				Password:    orDefaultStr(h.config.PGPassword, "postgres"),
 				Database:    orDefaultStr(h.config.PGDatabase, "postgres"),
 				ClusterType: clusterType,
 				Role:        roleB,
@@ -355,35 +542,45 @@ func (h *Handler) serveProvisionReplica(w http.ResponseWriter, r *http.Request, 
 			},
 		},
 	}
+
+	// Step 7: Save cluster to workspace (progress 60-70)
 	h.setProvisionTask(provisionTask{
 		TaskID:    taskID,
+		TaskType:  "provision." + replType,
 		Status:    "running",
-		Progress:  20,
-		Message:   "creating replicated cluster",
+		Progress:  60,
+		Message:   "saving cluster to workspace",
 		ProjectID: req.ProjectID,
 		ClusterID: cluster.ID,
 		StartedAt: time.Now().UnixMilli(),
 	})
 
 	if err := h.workspace.appendCluster(req.ProjectID, cluster); err != nil {
+		_ = provider.StopReplica(ctx, replicaInfo)
+		_ = h.provisionService.StopInstance(ctx, primaryInfo)
 		h.setProvisionTask(provisionTask{
 			TaskID:     taskID,
+			TaskType:   "provision." + replType,
 			Status:     "failed",
 			Progress:   100,
-			Message:    err.Error(),
+			Message:    "failed to save cluster: " + err.Error(),
 			ProjectID:  req.ProjectID,
 			ClusterID:  cluster.ID,
 			StartedAt:  time.Now().UnixMilli(),
 			FinishedAt: time.Now().UnixMilli(),
+			Error:      err.Error(),
 		})
 		h.writeError(w, r, 400, err.Error())
 		return
 	}
+
+	// Step 8: Try connect primary node (progress 70-90)
 	h.setProvisionTask(provisionTask{
 		TaskID:    taskID,
+		TaskType:  "provision." + replType,
 		Status:    "running",
-		Progress:  80,
-		Message:   "cluster metadata created, testing primary connection",
+		Progress:  70,
+		Message:   "connecting to nodes",
 		ProjectID: req.ProjectID,
 		ClusterID: cluster.ID,
 		StartedAt: time.Now().UnixMilli(),
@@ -394,23 +591,27 @@ func (h *Handler) serveProvisionReplica(w http.ResponseWriter, r *http.Request, 
 		autoConnected = cluster.Nodes[0].ID
 	}
 
+	// Step 9: Done (progress 100)
+	h.setProvisionTask(provisionTask{
+		TaskID:     taskID,
+		TaskType:   "provision." + replType,
+		Status:     "success",
+		Progress:   100,
+		Message:    "replicated cluster ready",
+		ProjectID:  req.ProjectID,
+		ClusterID:  cluster.ID,
+		NodeIDs:    []string{cluster.Nodes[0].ID, cluster.Nodes[1].ID},
+		StartedAt:  time.Now().UnixMilli(),
+		FinishedAt: time.Now().UnixMilli(),
+	})
+
 	writeJSON(w, r, 200, provisionResponse{
 		Success:             true,
 		ProjectID:           req.ProjectID,
 		ClusterID:           cluster.ID,
 		NodeIDs:             []string{cluster.Nodes[0].ID, cluster.Nodes[1].ID},
 		AutoConnectedNodeID: autoConnected,
-		TaskID:              cluster.ProvisionTaskID,
-	})
-	h.setProvisionTask(provisionTask{
-		TaskID:     taskID,
-		Status:     "success",
-		Progress:   100,
-		Message:    "replicated cluster ready",
-		ProjectID:  req.ProjectID,
-		ClusterID:  cluster.ID,
-		StartedAt:  time.Now().UnixMilli(),
-		FinishedAt: time.Now().UnixMilli(),
+		TaskID:              taskID,
 	})
 }
 
@@ -656,6 +857,24 @@ func portOpen(host string, port int, timeout time.Duration) bool {
 	}
 	_ = conn.Close()
 	return true
+}
+
+func waitForPostgres(ctx context.Context, host string, port int) error {
+	addr := fmt.Sprintf("%s:%d", host, port)
+	for i := 0; i < 30; i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		conn, err := net.DialTimeout("tcp", addr, time.Second)
+		if err == nil {
+			conn.Close()
+			return nil
+		}
+		time.Sleep(time.Second)
+	}
+	return fmt.Errorf("postgres not ready at %s", addr)
 }
 
 func genID(prefix string) string {
