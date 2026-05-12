@@ -1139,7 +1139,13 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	mux.HandleFunc("/api/workspace/projects/", h.ServeWorkspaceProjectByID)
 	mux.HandleFunc("/api/projects", h.ServeProjectList)
 	mux.HandleFunc("/api/projects/", h.ServeProjectByID)
-	mux.HandleFunc("/api/clusters/", h.ServeClusterByID)
+	mux.HandleFunc("/api/clusters/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/teardown") && r.Method == http.MethodPost {
+			h.ServeClusterTeardown(w, r)
+			return
+		}
+		h.ServeClusterByID(w, r)
+	})
 	// Cluster overview: GET /api/cluster/{id}/overview (new) and POST /api/cluster/overview (legacy)
 	mux.HandleFunc("/api/cluster/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/overview") {
