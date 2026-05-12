@@ -29,7 +29,8 @@ func (p *DockerProvider) Start(ctx context.Context, spec InstanceSpec) (Instance
 	// Step 2: Create volume for data persistence
 	volumeName := containerName + "-data"
 	if err := p.runCommand(ctx, "docker", "volume", "create", volumeName); err != nil {
-		// Volume might already exist, continue
+		// Volume creation failure is acceptable if volume already exists.
+		// Docker run will fail if the volume truly cannot be used, making this non-fatal.
 	}
 
 	// Step 3: Run container
