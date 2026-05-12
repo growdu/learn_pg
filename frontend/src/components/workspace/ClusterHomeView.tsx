@@ -41,6 +41,24 @@ interface DiscoveredInstance {
   confidence?: string
 }
 
+interface ReplicationStatus {
+  primaryConnected: boolean
+  secondaryConnected: boolean
+  replicationWorking: boolean
+  lag: string
+  lastHeartbeat: number
+}
+
+interface ReplicationCluster {
+  id: string
+  name: string
+  type: 'physical' | 'logical'
+  primary: { id: string; name: string; host: string; port: number }
+  secondary: { id: string; name: string; host: string; port: number }
+  replicationStatus: ReplicationStatus
+  createdAt: number
+}
+
 export default function ClusterHomeView(props: Props) {
   const {} = usePGStore()
   const [overview, setOverview] = useState<OverviewState>({ loading: false, error: '', nodes: [], timestamp: 0 })
@@ -508,6 +526,29 @@ export default function ClusterHomeView(props: Props) {
                           <div className="edge-info-meta">{selectedEdgeDetail.mode} · {selectedEdgeDetail.state} · {selectedEdgeDetail.syncState}</div>
                         </div>
                       )}
+                      {(cluster.replicationType === 'physical' || cluster.replicationType === 'logical') && (() => {
+                        const primaryNode = cluster.nodes.find((n) => n.role === 'primary') || cluster.nodes.find((n) => n.role === 'publisher') || cluster.nodes[0]
+                        const secondaryNode = cluster.nodes.find((n) => n.role !== 'primary' && n.role !== 'publisher') || cluster.nodes[1]
+                        if (!primaryNode || !secondaryNode) return null
+                        const primaryStatus = clusterStatuses.find((s) => s.id === primaryNode.id)
+                        const secondaryStatus = clusterStatuses.find((s) => s.id === secondaryNode.id)
+                        const replicationCluster: ReplicationCluster = {
+                          id: cluster.id,
+                          name: cluster.name,
+                          type: cluster.replicationType,
+                          primary: { id: primaryNode.id, name: primaryNode.name, host: primaryNode.host, port: primaryNode.port },
+                          secondary: { id: secondaryNode.id, name: secondaryNode.name, host: secondaryNode.host, port: secondaryNode.port },
+                          replicationStatus: {
+                            primaryConnected: primaryStatus?.connected ?? false,
+                            secondaryConnected: secondaryStatus?.connected ?? false,
+                            replicationWorking: (primaryStatus?.connected ?? false) && (secondaryStatus?.connected ?? false),
+                            lag: selectedEdgeDetail ? `${(selectedEdgeDetail.lagBytes / 1024 / 1024).toFixed(2)} MB` : '0 MB',
+                            lastHeartbeat: Date.now(),
+                          },
+                          createdAt: Date.now(),
+                        }
+                        return <ReplicationTopology cluster={replicationCluster} />
+                      })()}
                     </>
                   )}
                 </div>
@@ -714,6 +755,41 @@ function pickChannel(channels: ReplicationChannel[] | undefined, nodeName: strin
   if (!channels || channels.length === 0) return undefined
   const key = nodeName.toLowerCase()
   return channels.find((c) => c.name.toLowerCase().includes(key))
+}
+
+function ReplicationTopology({ cluster }: { cluster: ReplicationCluster }) {
+  const isPhysical = cluster.type === 'physical'
+
+  return (
+    <div className="replication-topology">
+      <div className="topology-diagram">
+        <div className="node primary">
+          <span className="node-label">Primary</span>
+          <span className="node-host">{cluster.primary.host}:{cluster.primary.port}</span>
+          <span className={`status-badge ${cluster.replicationStatus.primaryConnected ? 'connected' : 'disconnected'}`}>
+            {cluster.replicationStatus.primaryConnected ? 'Connected' : 'Disconnected'}
+          </span>
+        </div>
+
+        <div className="replication-arrow">
+          {isPhysical ? (
+            <span className="arrow physical">{"<"}-- replication --{">"}</span>
+          ) : (
+            <span className="arrow logical">{"--"}logical replication{"-"}&gt;</span>
+          )}
+          <span className="lag-info">LAG: {cluster.replicationStatus.lag}</span>
+        </div>
+
+        <div className="node secondary">
+          <span className="node-label">{isPhysical ? 'Standby' : 'Subscriber'}</span>
+          <span className="node-host">{cluster.secondary.host}:{cluster.secondary.port}</span>
+          <span className={`status-badge ${cluster.replicationStatus.secondaryConnected ? 'connected' : 'disconnected'}`}>
+            {cluster.replicationStatus.secondaryConnected ? 'Connected' : 'Disconnected'}
+          </span>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function TopologyMap({
