@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -29,7 +30,7 @@ func (h *Handler) ServeClusterTeardown(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		CleanupData bool `json:"cleanupData"`
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64*1024))
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		h.writeError(w, r, http.StatusBadRequest, "failed to read body")
 		return
@@ -59,7 +60,9 @@ func (h *Handler) ServeClusterTeardown(w http.ResponseWriter, r *http.Request) {
 			Port:        node.Port,
 			DataDir:     "",
 		}
-		_ = h.provisionService.StopInstance(r.Context(), info)
+		if err := h.provisionService.StopInstance(r.Context(), info); err != nil {
+			slog.Warn("failed to stop instance", "node", node.ID, "error", err)
+		}
 	}
 
 	// Delete cluster from workspace
