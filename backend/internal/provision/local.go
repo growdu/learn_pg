@@ -33,6 +33,7 @@ func (p *LocalProvider) Start(ctx context.Context, spec InstanceSpec) (InstanceI
 	if _, err := os.Stat(pgVersionFile); os.IsNotExist(err) {
 		// Step 3: Initdb if not initialized
 		if err := p.runCommand(ctx, "pg_ctl", "initdb", "-D", spec.DataDir); err != nil {
+			os.RemoveAll(spec.DataDir)
 			return InstanceInfo{}, fmt.Errorf("failed to initdb: %w", err)
 		}
 	} else if err != nil {
@@ -70,7 +71,9 @@ func (p *LocalProvider) Start(ctx context.Context, spec InstanceSpec) (InstanceI
 // Stop stops the local PostgreSQL instance.
 func (p *LocalProvider) Stop(ctx context.Context, info InstanceInfo) error {
 	// Stop PostgreSQL
-	_ = p.runCommand(ctx, "pg_ctl", "stop", "-D", info.DataDir)
+	if err := p.runCommand(ctx, "pg_ctl", "stop", "-D", info.DataDir); err != nil {
+		return fmt.Errorf("failed to stop PostgreSQL: %w", err)
+	}
 	// Remove data directory
 	os.RemoveAll(info.DataDir)
 	return nil
