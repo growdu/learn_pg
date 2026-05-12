@@ -247,6 +247,7 @@
 - 2026-05-11：完成单用户本地工具架构 review。
 - 2026-05-11：基于 review 结果重写实施方案与开发计划。
 - 2026-05-12：M4 完成 — WorkspaceHost 类型、Hosts 数组、provisionTask 字段补全、Host/Task CRUD API、前端类型。
+- 2026-05-12：M5 完成 — ProvisionService Provider 抽象、DockerProvider、LocalProvider、ServeProvisionSingle 重构、ServeClusterTeardown 端点、前端 Task 面板。
 
 ## 9. 当前进度摘要
 
@@ -255,7 +256,7 @@
 - M2：100%（已完成）
 - M3：100%（已完成）
 - M4：100%（已完成）
-- M5：0%（未开始）
+- M5：100%（已完成）
 - M6：0%（未开始）
 - M7：0%（未开始）
 - M8：0%（未开始）
