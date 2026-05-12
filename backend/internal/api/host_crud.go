@@ -78,13 +78,23 @@ func (h *Handler) ServeHostList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Re-fetch with generated ID
-		hosts, _ := h.workspace.ReadHosts()
+		hosts, err := h.workspace.ReadHosts()
+		if err != nil {
+			h.writeError(w, r, http.StatusInternalServerError, "failed to re-fetch host after creation: "+err.Error())
+			return
+		}
 		var saved workspaceHost
+		found := false
 		for _, h2 := range hosts {
 			if h2.Host == host.Host && h2.Name == host.Name {
 				saved = h2
+				found = true
 				break
 			}
+		}
+		if !found {
+			h.writeError(w, r, http.StatusInternalServerError, "host created but not found in re-fetch")
+			return
 		}
 		writeJSON(w, r, http.StatusCreated, map[string]interface{}{
 			"success": true,
@@ -165,7 +175,15 @@ func (h *Handler) ServeHostByID(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, r, http.StatusNotFound, err.Error())
 			return
 		}
-		updated, _ := h.workspace.GetHost(id)
+		updated, err := h.workspace.GetHost(id)
+		if err != nil {
+			h.writeError(w, r, http.StatusInternalServerError, "failed to re-fetch host after update: "+err.Error())
+			return
+		}
+		if updated == nil {
+			h.writeError(w, r, http.StatusNotFound, "host not found after update")
+			return
+		}
 		writeJSON(w, r, http.StatusOK, map[string]interface{}{
 			"success": true,
 			"host":    updated,
