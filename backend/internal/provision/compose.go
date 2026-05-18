@@ -23,7 +23,7 @@ func (g *ComposeGenerator) GeneratePhysicalCompose() (string, error) {
 
 services:
   primary:
-    image: postgres:${PG_VERSION:-16}
+    image: docker.m.daocloud.io/library/postgres:${PG_VERSION:-16}
     container_name: ${PROJECT_NAME}-primary
     environment:
       POSTGRES_USER: postgres
@@ -48,7 +48,7 @@ services:
       retries: 5
 
   standby:
-    image: postgres:${PG_VERSION:-16}
+    image: docker.m.daocloud.io/library/postgres:${PG_VERSION:-16}
     container_name: ${PROJECT_NAME}-standby
     environment:
       POSTGRES_USER: postgres
@@ -106,7 +106,7 @@ func (g *ComposeGenerator) GenerateLogicalCompose() (string, error) {
 
 services:
   publisher:
-    image: postgres:${PG_VERSION:-16}
+    image: docker.m.daocloud.io/library/postgres:${PG_VERSION:-16}
     container_name: ${PROJECT_NAME}-publisher
     environment:
       POSTGRES_USER: postgres
@@ -131,7 +131,7 @@ services:
       retries: 5
 
   subscriber:
-    image: postgres:${PG_VERSION:-16}
+    image: docker.m.daocloud.io/library/postgres:${PG_VERSION:-16}
     container_name: ${PROJECT_NAME}-subscriber
     environment:
       POSTGRES_USER: postgres
@@ -191,7 +191,7 @@ func (r *ComposeRunner) Up(ctx context.Context, projectName string, composeConte
 	}
 
 	// Execute docker compose up -d
-	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", composePath, "-p", projectName, "up", "-d")
+	cmd := exec.CommandContext(ctx, "docker-compose", "-f", composePath, "-p", projectName, "up", "-d")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -208,7 +208,7 @@ func (r *ComposeRunner) Down(ctx context.Context, projectName string) (string, e
 	composePath := filepath.Join(r.workDir, projectName+".yml")
 
 	// Execute docker compose down -v
-	cmd := exec.CommandContext(ctx, "docker", "compose", "-f", composePath, "-p", projectName, "down", "-v")
+	cmd := exec.CommandContext(ctx, "docker-compose", "-f", composePath, "-p", projectName, "down", "-v")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

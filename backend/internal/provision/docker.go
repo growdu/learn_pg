@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -14,16 +15,37 @@ type DockerProvider struct{}
 // ID returns "docker".
 func (p *DockerProvider) ID() string { return "docker" }
 
+// sanitizeContainerName replaces characters not allowed in Docker container names.
+func sanitizeContainerName(name string) string {
+	// Docker container names must match [a-zA-Z0-9][a-zA-Z0-9_.-]
+	var result []byte
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-' {
+			result = append(result, byte(c))
+		} else {
+			result = append(result, '_')
+		}
+	}
+	// Ensure name starts with alphanumeric
+	if len(result) == 0 || !((result[0] >= 'a' && result[0] <= 'z') || (result[0] >= 'A' && result[0] <= 'Z') || (result[0] >= '0' && result[0] <= '9')) {
+		result = append([]byte("pg"), result...)
+	}
+	return string(result)
+}
+
 // Start starts a PostgreSQL container.
 func (p *DockerProvider) Start(ctx context.Context, spec InstanceSpec) (InstanceInfo, error) {
-	containerName := fmt.Sprintf("pgv-%s-%d", spec.Name, time.Now().UnixNano())
+	containerName := fmt.Sprintf("pgv-%s-%d", sanitizeContainerName(spec.Name), time.Now().UnixNano())
 
-	pullCtx, pullCancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer pullCancel()
+	imageName := fmt.Sprintf("docker.m.daocloud.io/library/postgres:%s", spec.PGVersion)
 
-	// Step 1: Pull image
-	if err := p.runCommand(pullCtx, "docker", "pull", fmt.Sprintf("postgres:%s", spec.PGVersion)); err != nil {
-		return InstanceInfo{}, fmt.Errorf("failed to pull image: %w", err)
+	// Step 1: Ensure image exists locally (skip pull if already cached)
+	if hasImage, _ := p.hasLocalImage(imageName); !hasImage {
+		pullCtx, pullCancel := context.WithTimeout(ctx, 5*time.Minute)
+		defer pullCancel()
+		if err := p.runCommand(pullCtx, "docker", "pull", imageName); err != nil {
+			return InstanceInfo{}, fmt.Errorf("failed to pull image: %w", err)
+		}
 	}
 
 	// Step 2: Create volume for data persistence
@@ -33,13 +55,25 @@ func (p *DockerProvider) Start(ctx context.Context, spec InstanceSpec) (Instance
 		// Docker run will fail if the volume truly cannot be used, making this non-fatal.
 	}
 
-	// Step 3: Run container
+	// Step 3: Find available port (skip if spec.Port is 0)
+	port := spec.Port
+	if port == 0 {
+		port = 5432
+	}
+	if p.isPortInUse(port) {
+		port = p.findAvailablePort(port)
+		if port == 0 {
+			return InstanceInfo{}, fmt.Errorf("no available port found")
+		}
+	}
+
+	// Step 4: Run container
 	args := []string{
 		"run", "-d",
 		"--name", containerName,
 		"-e", "POSTGRES_PASSWORD=postgres",
 		"-e", "POSTGRES_USER=postgres",
-		"-p", fmt.Sprintf("%d:5432", spec.Port),
+		"-p", fmt.Sprintf("%d:5432", port),
 		"-v", fmt.Sprintf("%s:/var/lib/postgresql/data", volumeName),
 	}
 	if spec.Env != nil {
@@ -47,14 +81,14 @@ func (p *DockerProvider) Start(ctx context.Context, spec InstanceSpec) (Instance
 			args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
 		}
 	}
-	args = append(args, fmt.Sprintf("postgres:%s", spec.PGVersion))
+	args = append(args, fmt.Sprintf("docker.m.daocloud.io/library/postgres:%s", spec.PGVersion))
 
 	if err := p.runCommand(ctx, "docker", args...); err != nil {
 		return InstanceInfo{}, fmt.Errorf("failed to create container: %w", err)
 	}
 
 	// Step 4: Wait for PostgreSQL to be ready
-	if err := p.waitForPostgres(ctx, containerName, spec.Port); err != nil {
+	if err := p.waitForPostgres(ctx, containerName, port); err != nil {
 		p.Stop(ctx, InstanceInfo{ContainerID: containerName, ProviderID: "docker", DataDir: volumeName})
 		return InstanceInfo{}, fmt.Errorf("instance not ready: %w", err)
 	}
@@ -63,7 +97,7 @@ func (p *DockerProvider) Start(ctx context.Context, spec InstanceSpec) (Instance
 		ProviderID:  "docker",
 		ContainerID: containerName,
 		Host:        "127.0.0.1",
-		Port:        spec.Port,
+		Port:        port,
 		DataDir:     volumeName,
 		Name:        spec.Name,
 	}, nil
@@ -107,4 +141,41 @@ func (p *DockerProvider) runCommand(ctx context.Context, name string, args ...st
 		return fmt.Errorf("command failed: %s %v: %w", name, args, err)
 	}
 	return nil
+}
+
+// hasLocalImage checks if image exists locally.
+func (p *DockerProvider) hasLocalImage(imageName string) (bool, error) {
+	cmd := exec.Command("docker", "image", "inspect", imageName)
+	if err := cmd.Run(); err != nil {
+		return false, nil // image not found
+	}
+	return true, nil
+}
+
+// isPortInUse checks if a port is already in use.
+func (p *DockerProvider) isPortInUse(port int) bool {
+	// Check via docker ps first
+	cmd := exec.Command("docker", "ps", "--filter", fmt.Sprintf("publish=%d", port), "--format", "{{.Names}}")
+	output := &bytes.Buffer{}
+	cmd.Stdout = output
+	cmd.Run()
+	if output.Len() > 0 {
+		return true
+	}
+	// Also check via netstat for non-docker listeners
+	cmd2 := exec.Command("netstat", "-tlnp")
+	output2 := &bytes.Buffer{}
+	cmd2.Stdout = output2
+	cmd2.Run()
+	return strings.Contains(output2.String(), fmt.Sprintf(":%d", port))
+}
+
+// findAvailablePort finds an available port starting from a given port.
+func (p *DockerProvider) findAvailablePort(startPort int) int {
+	for port := startPort; port < startPort+100; port++ {
+		if !p.isPortInUse(port) {
+			return port
+		}
+	}
+	return 0
 }

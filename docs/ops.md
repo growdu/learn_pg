@@ -276,3 +276,81 @@ curl http://localhost:3000/health
 - 任务队列
 - 权限模型
 - 持久化方案
+
+## 11. 联调检查清单
+
+### 11.1 环境准备
+
+- [ ] Docker daemon 运行中（`docker info`）
+- [ ] 后端运行在 `http://localhost:8080`（或配置的端口）
+- [ ] 前端运行在 `http://localhost:5173`（开发模式）
+- [ ] PostgreSQL 测试实例运行中（用于 E2E 测试）
+
+### 11.2 启动 E2E 测试环境
+
+```bash
+# 启动 E2E 测试专用 PostgreSQL
+docker compose -f docker-compose.e2e.yml up -d
+
+# 验证 PG 可用
+pg_isready -h 127.0.0.1 -p 5432 -U postgres
+```
+
+### 11.3 运行测试
+
+```bash
+cd tests/e2e
+npm install
+npx playwright install chromium
+
+# 运行所有 E2E 测试
+npm test
+
+# 带 UI 运行
+npm run test:ui
+
+# 清理测试环境
+npm run test:cleanup
+docker compose -f docker-compose.e2e.yml down
+```
+
+### 11.4 主链路检查项
+
+| 功能 | 验证方式 | 预期结果 |
+|------|---------|---------|
+| 手动连接数据库 | `POST /api/connect` | 返回 version |
+| 主机探测扫描 | `POST /api/discovery/host/scan` | 返回 reachable 状态 |
+| DSN 导入 | `POST /api/discovery/dsn/validate` + `import` | 节点写入 workspace |
+| 单机 provision | `POST /api/provision/single` | 容器拉起，节点可连接 |
+| 预览模式 | 前端操作 | 不调用 API，不写 workspace |
+| provision 失败 | 模拟错误 | 明确错误提示，无假资源 |
+
+### 11.5 常见 E2E 测试问题
+
+**Q: Playwright 找不到浏览器**
+```bash
+npx playwright install chromium
+```
+
+**Q: Docker 命令在 CI 中失败**
+- 检查 Docker-in-Docker (DinD) 配置
+- 或使用 GitHub Actions 的 `docker/setup-buildx-action`
+
+**Q: 测试超时**
+- 检查 `docker-compose.e2e.yml` 中 PostgreSQL 是否正常启动
+- 增加 `globalSetup` 等待时间
+
+**Q: 前端构建失败**
+```bash
+cd frontend && npm install && npm run build
+```
+
+## 12. 关键文件位置
+
+| 文件 | 说明 |
+|------|------|
+| `backend/data/workspace_projects.json` | 工作区持久化数据 |
+| `backend/data/provision_tasks.json` | provision 任务状态 |
+| `tests/e2e/` | Playwright E2E 测试套件 |
+| `docker-compose.e2e.yml` | E2E 测试环境依赖 |
+| `docs/superpowers/specs/` | 设计文档 |

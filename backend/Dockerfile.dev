@@ -4,6 +4,9 @@ ENV GOPROXY=https://goproxy.cn,direct
 ENV GO111MODULE=on
 ENV GOSUMDB=off
 
+# Install docker-cli for DockerProvider
+RUN apk add --no-cache docker-cli bash
+
 WORKDIR /app
 
 COPY go.mod go.sum ./

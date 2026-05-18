@@ -8,6 +8,7 @@ import CLOGViewer from './components/clog/CLOGViewer'
 import PipelineView from './components/pipeline/PipelineView'
 import BufferHeatmapView from './components/buffer/BufferHeatmapView'
 import LockGraphView from './components/lock/LockGraphView'
+import ToastNotification from './components/common/ToastNotification'
 import MemoryStructView from './components/memory/MemoryStructView'
 import PlanTreeView from './components/pipeline/PlanTreeView'
 import TransactionStateView, { type TransactionState } from './components/transaction/TransactionStateView'
@@ -22,6 +23,7 @@ import type { ClusterNodeConfig } from './types/cluster'
 import type { WorkspaceComponent, WorkspaceProject } from './types/workspace'
 import type { ReplicationTemplate, TemplateParams } from './types/template'
 import { ALL_TEMPLATES } from './types/template'
+import type { TemplateCreateMode } from './components/workspace/TemplateDialog'
 import type { LockEdge, LockNode } from './components/lock/LockGraphView'
 import './styles/index.css'
 
@@ -46,11 +48,11 @@ const TASK_STORAGE_KEY = 'pgv_provision_task'
 const WORKSPACE_SCHEMA_VERSION = 1
 const genId = () => crypto.randomUUID?.() ?? Math.random().toString(36).slice(2)
 
-function loadProvisionTaskCache(): { taskId: string; status: string; progress: number; message: string; startedAt?: number; finishedAt?: number } | null {
+function loadProvisionTaskCache(): { taskId: string; status: string; progress: number; message: string; startedAt?: number; finishedAt?: number; projectId?: string } | null {
   try {
     const raw = localStorage.getItem(TASK_STORAGE_KEY)
     if (!raw) return null
-    const t = JSON.parse(raw) as { taskId?: string; status?: string; progress?: number; message?: string; startedAt?: number; finishedAt?: number }
+    const t = JSON.parse(raw) as { taskId?: string; status?: string; progress?: number; message?: string; startedAt?: number; finishedAt?: number; projectId?: string }
     if (!t.taskId || !t.status) return null
     return {
       taskId: t.taskId,
@@ -59,6 +61,7 @@ function loadProvisionTaskCache(): { taskId: string; status: string; progress: n
       message: t.message ?? '',
       startedAt: t.startedAt,
       finishedAt: t.finishedAt,
+      projectId: t.projectId,
     }
   } catch {
     return null
@@ -112,7 +115,7 @@ async function provisionClusterByTemplate(
       body: JSON.stringify({
         projectId,
         clusterName,
-        runtime: { type: 'local' },
+        runtime: { type: 'docker' },
       }),
     })
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` }
@@ -213,7 +216,7 @@ function App() {
   const [snapshotLocks, setSnapshotLocks] = useState<{ nodes: LockNode[]; edges: LockEdge[] }>({ nodes: [], edges: [] })
   const [snapshotTransactions, setSnapshotTransactions] = useState<TransactionState[]>([])
   const [snapshotBackends, setSnapshotBackends] = useState<Array<Record<string, string>>>([])
-  const [provisionTask, setProvisionTask] = useState<{ taskId: string; status: string; progress: number; message: string; startedAt?: number; finishedAt?: number } | null>(() => loadProvisionTaskCache())
+  const [provisionTask, setProvisionTask] = useState<{ taskId: string; status: string; progress: number; message: string; startedAt?: number; finishedAt?: number; projectId?: string } | null>(() => loadProvisionTaskCache())
   const [recentTasks, setRecentTasks] = useState<Array<{ taskId: string; status: string; progress: number; message?: string; startedAt?: number; finishedAt?: number; projectId?: string; clusterId?: string }>>([])
   const [showRecentTasks, setShowRecentTasks] = useState(false)
   const [recentTaskFilter, setRecentTaskFilter] = useState<'all' | 'running' | 'success' | 'failed'>('all')
@@ -341,8 +344,25 @@ function App() {
     setSelectedProjectId(project.id)
   }
 
-  const handleTemplateConfirm = (templateId: ReplicationTemplate, name: string, params: TemplateParams) => {
+  const handleTemplateConfirm = (templateId: ReplicationTemplate, name: string, params: TemplateParams, mode: TemplateCreateMode) => {
     setShowTemplateDialog(false)
+
+    // Preview mode: build local template without API calls
+    if (mode === 'preview') {
+      const projectId = genId()
+      const tpl = ALL_TEMPLATES.find((t) => t.id === templateId)!
+      const previewProject = tpl.buildProject(name.trim() || `项目 ${projects.length + 1}`, params, makeDefaultNode)
+      previewProject.id = projectId
+      const previewProjects = [...projects, previewProject]
+      setProjects(previewProjects)
+      setSelectedProjectId(projectId)
+      setSelectedClusterId(previewProject.clusters[0]?.id ?? '')
+      setHighlightedComponentIds(previewProject.components.map((c) => c.id))
+      setCurrentView('component_home')
+      return
+    }
+
+    // Real create mode: call provision API
     void (async () => {
       const projectId = genId()
       const baseProject: WorkspaceProject = { id: projectId, name: name.trim() || `项目 ${projects.length + 1}`, clusters: [], components: [] }
@@ -354,16 +374,21 @@ function App() {
       const provision = seedOk ? await provisionClusterByTemplate(templateId, projectId, `${baseProject.name}-${templateId}`) : { ok: false as const }
       const provisionOk = provision.ok
       if (provision.taskId) {
-        setProvisionTask({ taskId: provision.taskId, status: 'running', progress: 5, message: '集群创建中...', startedAt: Date.now() })
+        setProvisionTask({ taskId: provision.taskId, status: 'running', progress: 5, message: '集群创建中...', startedAt: Date.now(), projectId })
       } else if (!provisionOk) {
+        // No fallback — failure is explicit failure
         setProvisionTask({
           taskId: `local-${Date.now()}`,
           status: 'failed',
           progress: 100,
-          message: `后端创建失败，已回退本地模板：${provision.error || 'unknown error'}`,
+          message: `集群创建失败：${provision.error || 'unknown error'}`,
           startedAt: Date.now(),
           finishedAt: Date.now(),
+          projectId,
         })
+        // Remove the optimistic project since provision failed
+        setProjects((prev) => prev.filter((p) => p.id !== projectId))
+        return
       }
       if (provisionOk) {
         const remote = await loadProjectsFromBackend()
@@ -377,17 +402,6 @@ function App() {
           return
         }
       }
-
-      // Fallback: keep local template creation when backend provision is unavailable.
-      const tpl = ALL_TEMPLATES.find((t) => t.id === templateId)!
-      const fallbackProject = tpl.buildProject(baseProject.name, params, makeDefaultNode)
-      fallbackProject.id = projectId
-      const fallbackProjects = projects.filter((p) => p.id !== projectId).concat(fallbackProject)
-      setProjects(fallbackProjects)
-      setSelectedProjectId(projectId)
-      setSelectedClusterId(fallbackProject.clusters[0]?.id ?? '')
-      setHighlightedComponentIds(fallbackProject.components.map((c) => c.id))
-      setCurrentView('component_home')
     })()
   }
 
@@ -892,6 +906,10 @@ function App() {
           onCancel={() => setShowTemplateDialog(false)}
         />
       )}
+      <ToastNotification
+        task={provisionTask}
+        onDismiss={() => setProvisionTask(null)}
+      />
     </div>
   )
 }

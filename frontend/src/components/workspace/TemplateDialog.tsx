@@ -1,8 +1,10 @@
 ﻿import { useState, type CSSProperties } from 'react'
 import { ALL_TEMPLATES, type ReplicationTemplate, type TemplateParams } from '../../types/template'
 
+export type TemplateCreateMode = 'preview' | 'create'
+
 interface Props {
-  onConfirm: (templateId: ReplicationTemplate, name: string, params: TemplateParams) => void
+  onConfirm: (templateId: ReplicationTemplate, name: string, params: TemplateParams, mode: TemplateCreateMode) => void
   onCancel: () => void
 }
 
@@ -26,6 +28,7 @@ export default function TemplateDialog({ onConfirm, onCancel }: Props) {
     return `我的${t.name.replace('模板', '项目')}`
   })
   const [params, setParams] = useState<TemplateParams>(() => ALL_TEMPLATES.find((x) => x.id === 'physical')!.defaultParams)
+  const [mode, setMode] = useState<TemplateCreateMode>('create')
 
   const template = ALL_TEMPLATES.find((x) => x.id === selected)!
 
@@ -123,11 +126,43 @@ export default function TemplateDialog({ onConfirm, onCancel }: Props) {
               <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>可用变量：{'{project}'}、{'{type}'}，例如：{'{project}'}-{'{type}'}</div>
             </div>
           </div>
+
+          <div style={{ marginBottom: '1rem', padding: '0.8rem', background: 'var(--bg-tertiary)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: '0.82rem', fontWeight: 600, marginBottom: '0.6rem' }}>创建方式</div>
+            <label style={{ ...checkRow, marginBottom: '0.4rem' }}>
+              <input
+                type="radio"
+                name="createMode"
+                value="create"
+                checked={mode === 'create'}
+                onChange={() => setMode('create')}
+              />
+              <div>
+                <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>真实创建集群</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>调用后端 provision，拉起真实 PostgreSQL 容器</div>
+              </div>
+            </label>
+            <label style={checkRow}>
+              <input
+                type="radio"
+                name="createMode"
+                value="preview"
+                checked={mode === 'preview'}
+                onChange={() => setMode('preview')}
+              />
+              <div>
+                <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>仅预览模板</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>查看集群拓扑结构，不调用后端，不写入 workspace</div>
+              </div>
+            </label>
+          </div>
         </div>
 
         <div style={footer}>
           <button onClick={onCancel} style={cancelBtn}>取消</button>
-          <button onClick={() => onConfirm(selected, name.trim() || template.name, params)} style={confirmBtn}>创建项目</button>
+          <button onClick={() => onConfirm(selected, name.trim() || template.name, params, mode)} style={confirmBtn}>
+            {mode === 'preview' ? '预览' : '创建'}
+          </button>
         </div>
       </div>
     </div>

@@ -67,6 +67,7 @@ export default function ClusterHomeView(props: Props) {
   const [activeTab, setActiveTab] = useState<'topology' | 'nodes' | 'add'>('topology')
   const [sourceFilter, setSourceFilter] = useState<'all' | 'provisioned' | 'discovered' | 'dsn' | 'manual'>('all')
   const [scanHost, setScanHost] = useState('127.0.0.1')
+  const [scanPort, setScanPort] = useState(5432)
   const [scanLoading, setScanLoading] = useState(false)
   const [scanError, setScanError] = useState('')
   const [instances, setInstances] = useState<DiscoveredInstance[]>([])
@@ -168,13 +169,13 @@ export default function ClusterHomeView(props: Props) {
   const runHostScan = async () => {
     setScanLoading(true)
     setScanError('')
-    addLog('info', `开始探测主机 ${scanHost.trim() || '-'}`)
+    addLog('info', `开始探测主机 ${scanHost.trim() || '-'}端口 ${scanPort}`)
     try {
       const res = await fetch('/api/discovery/host/scan', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ host: scanHost.trim() }),
+        body: JSON.stringify({ host: scanHost.trim(), port: scanPort }),
       })
-      const data = (await res.json()) as { success?: boolean; error?: string; instances?: DiscoveredInstance[] }
+      const data = (await res.json()) as { success?: boolean; error?: string; instances?: Array<{ host: string; port: number; version?: string; confidence?: string }> }
       if (!res.ok || !data.success) throw new Error(data.error || `HTTP ${res.status}`)
       setInstances(data.instances ?? [])
       addLog('success', `发现 ${data.instances?.length ?? 0} 个候选实例`)
@@ -691,6 +692,7 @@ export default function ClusterHomeView(props: Props) {
                           </div>
                           <div className="form-row">
                             <input className="input" value={scanHost} onChange={(e) => setScanHost(e.target.value)} placeholder="主机 IP" />
+                            <input className="input" type="number" value={scanPort} onChange={(e) => setScanPort(Number(e.target.value))} placeholder="端口" style={{ width: '100px' }} />
                             <button className="btn" onClick={runHostScan} disabled={scanLoading}>{scanLoading ? '探测中' : '扫描'}</button>
                           </div>
                           <label className="flex items-center gap-sm text-sm">
@@ -703,8 +705,12 @@ export default function ClusterHomeView(props: Props) {
                           <div className="discovered-list">
                             {instances.map((ins, idx) => (
                               <div key={`${ins.host}:${ins.port}-${idx}`} className="discovered-item">
-                                <span>{ins.host}:{ins.port} · {ins.service || 'postgresql'}</span>
-                                <button className="btn btn-sm" onClick={() => importDiscovered(ins)}>导入</button>
+                                <span>
+                                  {ins.host}:{ins.port}
+                                  {ins.version ? ` · ${ins.version}` : ' · 不可达'}
+                                  {ins.confidence === 'high' ? ' ✓' : ins.confidence === 'low' ? ' ✗' : ''}
+                                </span>
+                                <button className="btn btn-sm" onClick={() => importDiscovered(ins as DiscoveredInstance)}>导入</button>
                               </div>
                             ))}
                           </div>

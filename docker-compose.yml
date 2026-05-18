@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   postgres:
-    image: learn_pg/postgres:18.3-debug
+    image: docker.m.daocloud.io/library/postgres:16
     container_name: pgv-postgres
     environment:
       POSTGRES_USER: postgres
@@ -52,6 +52,7 @@ services:
         condition: service_healthy
     volumes:
       - pg_data:/var/lib/postgresql:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - pgv-net
     healthcheck:
@@ -66,7 +67,7 @@ services:
       dockerfile: Dockerfile
     container_name: pgv-frontend
     ports:
-      - "80:80"
+      - "8081:80"
     depends_on:
       - backend
     networks:

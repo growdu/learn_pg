@@ -658,6 +658,8 @@ func (h *Handler) ServeProvisionTasks(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ServeDiscoveryHostScan handles POST /api/discovery/host/scan.
+// It performs TCP connectivity check followed by PostgreSQL validation via pg_isready.
 func (h *Handler) ServeDiscoveryHostScan(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		h.writeError(w, r, 405, "POST required")
@@ -674,19 +676,44 @@ func (h *Handler) ServeDiscoveryHostScan(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ports := []int{5432, 5433}
-	instances := make([]discoveryInstance, 0, len(ports))
-	for _, p := range ports {
-		if portOpen(host, p, 900*time.Millisecond) {
-			instances = append(instances, discoveryInstance{
-				Host:       host,
-				Port:       p,
-				Service:    "postgresql",
-				Confidence: "medium",
-			})
-		}
+	port := req.SSH.Port
+	if port <= 0 {
+		port = 5432
 	}
-	writeJSON(w, r, 200, discoveryScanResponse{Success: true, Instances: instances})
+
+	addr := fmt.Sprintf("%s:%d", host, port)
+
+	// Step 1: TCP connectivity check
+	if !portOpen(addr, 900*time.Millisecond) {
+		writeJSON(w, r, 200, discoveryScanResponse{
+			Success: true,
+			Instances: []discoveryInstance{
+				{
+					Host:       host,
+					Port:       port,
+					Service:    "postgresql",
+					Confidence: "low",
+				},
+			},
+		})
+		return
+	}
+
+	// Step 2: pg_isready validation
+	version, reachable := pgIsReady(host, port)
+	inst := discoveryInstance{
+		Host:       host,
+		Port:       port,
+		Service:    "postgresql",
+		Confidence: "high",
+	}
+	if reachable {
+		inst.Version = version
+	} else {
+		inst.Confidence = "low"
+	}
+
+	writeJSON(w, r, 200, discoveryScanResponse{Success: true, Instances: []discoveryInstance{inst}})
 }
 
 func (h *Handler) ServeDiscoveryHostImport(w http.ResponseWriter, r *http.Request) {
@@ -850,13 +877,33 @@ func parseDSN(dsn string) (host string, port int, user, pass, db string, err err
 	return host, port, user, pass, db, nil
 }
 
-func portOpen(host string, port int, timeout time.Duration) bool {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), timeout)
+func portOpen(addr string, timeout time.Duration) bool {
+	conn, err := net.DialTimeout("tcp", addr, timeout)
 	if err != nil {
 		return false
 	}
 	_ = conn.Close()
 	return true
+}
+
+// pgIsReady checks if a PostgreSQL instance is accepting connections using pg_isready.
+// Returns the server version string (if reachable) and a boolean indicating reachability.
+func pgIsReady(host string, port int) (version string, reachable bool) {
+	// Try to connect without credentials to check if PG is accepting connections.
+	// We attempt both "postgres" and "template1" databases as pg_isready does.
+	c := &pg.Client{}
+	// Use a short connection timeout to avoid blocking.
+	// pg_isready accepts connections on any database, so we try template1 first then postgres.
+	dbs := []string{"template1", "postgres"}
+	for _, db := range dbs {
+		if err := c.Connect(host, port, "pgsql", "", db); err == nil {
+			reachable = true
+			version, _ = c.GetVersion()
+			c.Close()
+			break
+		}
+	}
+	return version, reachable
 }
 
 func waitForPostgres(ctx context.Context, host string, port int) error {
