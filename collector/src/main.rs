@@ -7,15 +7,13 @@ use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use probe::WalInsertEvent;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::env;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::signal;
 use tokio::sync::mpsc;
-use tokio::time::{interval, Duration};
+use tokio::time::Duration;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-use tracing_subscriber;
 
 static EVENT_SEQ: AtomicU64 = AtomicU64::new(0);
 static RUNNING: AtomicBool = AtomicBool::new(true);

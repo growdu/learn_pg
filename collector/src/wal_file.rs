@@ -264,10 +264,6 @@ fn read_le16(bytes: &[u8]) -> u16 {
     bytes[0] as u16 | (bytes[1] as u16) << 8
 }
 
-fn read_le64(bytes: &[u8]) -> u64 {
-    read_le32(&bytes[..4]) as u64 | ((read_le32(&bytes[4..8]) as u64) << 32)
-}
-
 fn read_be32(bytes: &[u8]) -> u32 {
     (bytes[0] as u32) << 24 | (bytes[1] as u32) << 16 | (bytes[2] as u32) << 8 | (bytes[3] as u32)
 }
