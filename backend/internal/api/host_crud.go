@@ -158,6 +158,11 @@ func (h *Handler) ServeHostByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if req.Port != nil && (*req.Port < 1 || *req.Port > 65535) {
+			h.writeError(w, r, http.StatusBadRequest, "port must be between 1 and 65535")
+			return
+		}
+
 		err = h.workspace.UpdateHost(id, func(h2 *workspaceHost) error {
 			if req.Name != nil {
 				h2.Name = *req.Name
@@ -166,10 +171,6 @@ func (h *Handler) ServeHostByID(w http.ResponseWriter, r *http.Request) {
 				h2.Host = *req.Host
 			}
 			if req.Port != nil {
-				if *req.Port < 1 || *req.Port > 65535 {
-					h.writeError(w, r, http.StatusBadRequest, "port must be between 1 and 65535")
-					return
-				}
 				h2.Port = *req.Port
 			}
 			if req.SSHUser != nil {

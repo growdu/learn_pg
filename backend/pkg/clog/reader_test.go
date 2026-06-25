@@ -34,8 +34,8 @@ func TestGetCLOGPath(t *testing.T) {
 		{0, "/data", "/data/pg_xact/0000"},
 		{100, "/data", "/data/pg_xact/0000"},
 		{TransactionsPerPage, "/data", "/data/pg_xact/0000"},
-		{uint32(transactionsPerSegment), "/data", "/data/pg_xact/0001"},
-		{uint32(transactionsPerSegment) + 1, "/data", "/data/pg_xact/0001"},
+		{uint32(TransactionsPerSegment), "/data", "/data/pg_xact/0001"},
+		{uint32(TransactionsPerSegment) + 1, "/data", "/data/pg_xact/0001"},
 	}
 
 	for _, tt := range tests {

@@ -18,7 +18,7 @@ func TestParseRecordInfo(t *testing.T) {
 		{2, 0x30, "HEAP/HOT_UPDATE"},
 		{3, 0x01, "BTREE/OP_1"},
 		{1, 0x20, "HEAP2/VISIBLE"},
-		{10, 0x10, "HEAP3/OP_16"},
+		{10, 0x10, "HEAP3/CLEAN"},
 	}
 
 	for _, tt := range tests {

@@ -11,10 +11,14 @@ func TestReadRecordsParsesSyntheticSegment(t *testing.T) {
 	segmentPath := filepath.Join(dir, "000000010000000000000001")
 	segment := make([]byte, PageSize*2)
 
-	// PG 18 WAL page header: offset 8 = WAL page address (BE uint64)
-	// offset 16 = page_len (BE uint32, 0 = unused)
-	writeBE64(segment[8:16], 0)                  // WAL page address = 0 (big-endian)
-	writeBE32(segment[16:20], 0)                 // page_len = 0 (unused so far)
+	// PG 18 WAL long page header:
+	// offset 0-1: magic = 0xD118 (LE16)
+	// offset 2: info
+	// offset 8-15: WAL page address (LE64)
+	// offset 16-19: xlp_len (LE32)
+	writeLE16(segment[0:2], 0xD118)           // magic (LE)
+	writeBE64(segment[8:16], 0)               // WAL page address = 0 (big-endian)
+	writeBE32(segment[16:20], 0)               // page_len = 0 (unused so far)
 
 	// First page (pageNum=0): page_len tells us how many bytes are valid.
 	// Write a WAL record at offset 24 (after 24-byte long header).
@@ -32,8 +36,9 @@ func TestReadRecordsParsesSyntheticSegment(t *testing.T) {
 
 	// Page 1 (second page): also mark as used
 	page1 := segment[PageSize : PageSize*2]
-	writeBE64(page1[8:16], uint64(PageSize))   // WAL page address = PageSize (big-endian)
-	writeBE32(page1[16:20], 0)                  // page_len = 0 (unused, just a placeholder)
+	writeLE16(page1[0:2], 0xD118)                       // magic (LE)
+	writeBE64(page1[8:16], uint64(PageSize))           // WAL page address = PageSize (big-endian)
+	writeBE32(page1[16:20], 0)                          // page_len = 0 (unused, just a placeholder)
 
 	if err := os.WriteFile(segmentPath, segment, 0o644); err != nil {
 		t.Fatalf("write segment: %v", err)
@@ -76,6 +81,7 @@ func TestTailRecordsReturnsLatestSubset(t *testing.T) {
 	segment := make([]byte, PageSize)
 
 	// PG 18 WAL page header
+	writeLE16(segment[0:2], 0xD118)          // magic (LE)
 	writeBE64(segment[8:16], 0)
 	// Mark first page as used (full page)
 	writeBE32(segment[16:20], uint32(PageSize))
@@ -109,6 +115,7 @@ func TestReadRecordsAssemblesRecordAcrossPages(t *testing.T) {
 
 	// PG 18 WAL page headers (big-endian)
 	// Page 0: mark as used (full page)
+	writeLE16(segment[0:2], 0xD118)   // magic (LE)
 	writeBE64(segment[8:16], 0)
 	writeBE32(segment[16:20], uint32(PageSize))
 
@@ -125,6 +132,7 @@ func TestReadRecordsAssemblesRecordAcrossPages(t *testing.T) {
 	// When a record spans pages, page 1's page_len = bytes_needed (continuation data)
 	// The reader uses pending[] to reassemble across pages.
 	page1 := segment[PageSize : PageSize*2]
+	writeLE16(page1[0:2], 0xD118)               // magic (LE)
 	writeBE64(page1[8:16], uint64(PageSize))
 	// page_len tells the reader how many continuation bytes are on this page.
 	// Since the record is recordLen+24 total and page 0 gave us (8192-24) = 8168,
@@ -157,6 +165,7 @@ func TestReadRecordsParsesBlockReferences(t *testing.T) {
 	segment := make([]byte, PageSize)
 
 	// PG 18 WAL page header (big-endian)
+	writeLE16(segment[0:2], 0xD118)   // magic (LE)
 	writeBE64(segment[8:16], 0)
 	// Mark page as used (full page)
 	writeBE32(segment[16:20], uint32(PageSize))
@@ -243,6 +252,11 @@ func writeLE32(target []byte, value uint32) {
 	target[1] = byte(value >> 8)
 	target[2] = byte(value >> 16)
 	target[3] = byte(value >> 24)
+}
+
+func writeLE16(target []byte, value uint16) {
+	target[0] = byte(value)
+	target[1] = byte(value >> 8)
 }
 
 func writeBE64(target []byte, value uint64) {
