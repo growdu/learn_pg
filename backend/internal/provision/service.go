@@ -176,8 +176,13 @@ func (s *Service) findAvailablePort() (int, error) {
 }
 
 func isPortAvailable(port int) bool {
-	// Simple check - in real impl would try to bind
-	return true // placeholder
+	// Try to bind to the port - if it succeeds, the port is free
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return false
+	}
+	ln.Close()
+	return true
 }
 
 // waitForPostgres waits for PostgreSQL to be ready at the given host:port.

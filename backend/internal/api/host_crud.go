@@ -58,16 +58,21 @@ func (h *Handler) ServeHostList(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, r, http.StatusBadRequest, "name is required")
 			return
 		}
-		if strings.TrimSpace(req.Host) == "" {
-			h.writeError(w, r, http.StatusBadRequest, "host is required")
-			return
-		}
+	if strings.TrimSpace(req.Host) == "" {
+		h.writeError(w, r, http.StatusBadRequest, "host is required")
+		return
+	}
+	port := orDefaultInt(req.Port, 22)
+	if port < 1 || port > 65535 {
+		h.writeError(w, r, http.StatusBadRequest, "port must be between 1 and 65535")
+		return
+	}
 
-		host := workspaceHost{
+	host := workspaceHost{
 			ID:        "", // will be generated
 			Name:      req.Name,
 			Host:      req.Host,
-			Port:     orDefaultInt(req.Port, 22),
+			Port:      port,
 			SSHUser:   orDefaultStr(req.SSHUser, "root"),
 			SSHKey:    req.SSHKey,
 			CreatedAt: time.Now().UnixMilli(),
@@ -161,6 +166,10 @@ func (h *Handler) ServeHostByID(w http.ResponseWriter, r *http.Request) {
 				h2.Host = *req.Host
 			}
 			if req.Port != nil {
+				if *req.Port < 1 || *req.Port > 65535 {
+					h.writeError(w, r, http.StatusBadRequest, "port must be between 1 and 65535")
+					return
+				}
 				h2.Port = *req.Port
 			}
 			if req.SSHUser != nil {

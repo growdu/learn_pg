@@ -15,6 +15,7 @@ import TransactionStateView, { type TransactionState } from './components/transa
 import ProjectHomeView from './components/workspace/ProjectHomeView'
 import ClusterHomeView from './components/workspace/ClusterHomeView'
 import ComponentHomeView from './components/workspace/ComponentHomeView'
+import HostManagementView from './components/workspace/HostManagementView'
 import TemplateDialog from './components/workspace/TemplateDialog'
 import { useVisualizationData } from './hooks/useVisualizationData'
 import { useWebSocket } from './hooks/useWebSocket'
@@ -31,6 +32,7 @@ export type View =
   | 'project_home'
   | 'cluster_home'
   | 'component_home'
+  | 'host_management'
   | 'node_home'
   | 'sql'
   | 'write'
@@ -743,6 +745,8 @@ function App() {
             }}
           />
         )
+      case 'host_management':
+        return <HostManagementView onGoBack={() => setCurrentView('project_home')} />
       case 'node_home':
         return (
           <NodeHomeView
@@ -873,7 +877,7 @@ function App() {
             </div>
           )}
           <div className="breadcrumb">
-            {['project_home', 'cluster_home', 'component_home'].includes(currentView)
+            {['project_home', 'cluster_home', 'component_home', 'host_management'].includes(currentView)
               ? selectedProject
                 ? `项目工作区 / ${selectedProject.name}${currentView === 'cluster_home' ? ` / 集群 ${selectedProject.clusters.find((c) => c.id === selectedClusterId)?.name ?? ''}` : ''}`
                 : '项目工作区 / 未选择项目'

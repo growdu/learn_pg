@@ -30,14 +30,17 @@ func (h *Handler) ServeClusterTeardown(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		CleanupData bool `json:"cleanupData"`
 	}
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64*1024))
 	if err != nil {
 		h.writeError(w, r, http.StatusBadRequest, "failed to read body")
 		return
 	}
 	defer r.Body.Close()
 	if len(body) > 0 {
-		json.Unmarshal(body, &req)
+		if err := json.Unmarshal(body, &req); err != nil {
+			h.writeError(w, r, http.StatusBadRequest, "invalid JSON")
+			return
+		}
 	}
 
 	// Find cluster in workspace
@@ -53,8 +56,13 @@ func (h *Handler) ServeClusterTeardown(w http.ResponseWriter, r *http.Request) {
 
 	// Stop each node's instance
 	for _, node := range cluster.Nodes {
+		// Infer provider from host: localhost → docker, otherwise ssh-based
+		providerID := "docker"
+		if node.Host != "localhost" && node.Host != "127.0.0.1" && node.Host != "" {
+			providerID = "ssh"
+		}
 		info := provision.InstanceInfo{
-			ProviderID:  "docker", // TODO: determine from cluster metadata
+			ProviderID:  providerID,
 			ContainerID: node.ID,
 			Host:        node.Host,
 			Port:        node.Port,

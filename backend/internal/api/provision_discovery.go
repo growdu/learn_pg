@@ -139,7 +139,7 @@ func (h *Handler) ServeProvisionSingle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req provisionSingleRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
 		h.writeError(w, r, 400, "invalid JSON")
 		return
 	}
@@ -302,7 +302,7 @@ func (h *Handler) ServeProvisionSingle(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) ServeProvisionPhysical(w http.ResponseWriter, r *http.Request) {
 	var req ReplicaProvisionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
 		h.writeError(w, r, 400, "invalid JSON")
 		return
 	}
@@ -312,7 +312,7 @@ func (h *Handler) ServeProvisionPhysical(w http.ResponseWriter, r *http.Request)
 
 func (h *Handler) ServeProvisionLogical(w http.ResponseWriter, r *http.Request) {
 	var req ReplicaProvisionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
 		h.writeError(w, r, 400, "invalid JSON")
 		return
 	}
@@ -666,7 +666,7 @@ func (h *Handler) ServeDiscoveryHostScan(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var req discoveryScanRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
 		h.writeError(w, r, 400, "invalid JSON")
 		return
 	}
@@ -722,7 +722,7 @@ func (h *Handler) ServeDiscoveryHostImport(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req discoveryImportRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
 		h.writeError(w, r, 400, "invalid JSON")
 		return
 	}
@@ -774,7 +774,7 @@ func (h *Handler) ServeDiscoveryDSNValidate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var req dsnValidateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
 		h.writeError(w, r, 400, "invalid JSON")
 		return
 	}
@@ -798,7 +798,7 @@ func (h *Handler) ServeDiscoveryDSNImport(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var req dsnImportRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
 		h.writeError(w, r, 400, "invalid JSON")
 		return
 	}

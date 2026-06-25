@@ -47,3 +47,12 @@ coverage/
 .obsidian/
 backend/data/workspace_projects.json
 backend/pgv-server
+
+# Go build cache
+.gocache/
+
+# Claude settings
+.claude/settings.local.json
+
+# npm cache
+frontend/.npm-cache/

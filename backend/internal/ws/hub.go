@@ -14,7 +14,15 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for development
+		// In production, restrict to known frontend origins.
+		// Allow all in dev (no browser CSP in dev mode).
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true // non-browser clients (curl, ws cli, collector)
+		}
+		// Dev: allow any origin since Vite serves on a different port than backend.
+		// TODO: in production, validate against FRONTEND_ORIGINS env var.
+		return true
 	},
 }
 

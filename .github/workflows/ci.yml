@@ -51,7 +51,7 @@ jobs:
           target: postgres
           load: false
           push: false
-          tags: ${{ env.REGISTRY }}/${{ env IMAGE_NAME }}-postgres:latest
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-postgres:latest
 
       # Build and push backend
       - name: Build backend
@@ -61,7 +61,7 @@ jobs:
           file: ./backend/Dockerfile
           load: false
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ env.REGISTRY }}/${{ env IMAGE_NAME }}-backend:latest
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:latest
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -74,7 +74,7 @@ jobs:
           file: ./frontend/Dockerfile
           load: false
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ env.REGISTRY }}/${{ env IMAGE_NAME }}-frontend:latest
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-frontend:latest
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -88,7 +88,7 @@ jobs:
           file: ./collector/Dockerfile
           load: false
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ env.REGISTRY }}/${{ env IMAGE_NAME }}-collector:latest
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-collector:latest
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

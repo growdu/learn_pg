@@ -352,7 +352,7 @@ func (h *Handler) ServeExecute(w http.ResponseWriter, r *http.Request) {
 
 	result, err := client.Execute(req.SQL)
 	if err != nil {
-		h.writeError(w, r, http.StatusOK, err.Error())
+		h.writeError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -853,7 +853,7 @@ func (h *Handler) ServeWALSegments(w http.ResponseWriter, r *http.Request) {
 	reader := wal.NewWALReader(dataDir)
 	segments, err := reader.ListWALSegments()
 	if err != nil {
-		h.writeError(w, r, http.StatusOK, "wal_segments: "+err.Error())
+		h.writeError(w, r, http.StatusInternalServerError, "wal_segments: "+err.Error())
 		return
 	}
 	names := make([]string, len(segments))
@@ -1411,10 +1411,14 @@ func (h *Handler) inspectNodeByID(nodeID string) clusterNodeStatus {
 			Database: node.Database,
 		})
 		if err2 := h.connMgr.Activate(nodeID); err2 != nil {
-			status.Error = err.Error()
+			status.Error = "activation failed: " + err2.Error()
 			return status
 		}
-		client, _ = h.connMgr.Get(nodeID)
+		client, err = h.connMgr.Get(nodeID)
+		if err != nil {
+			status.Error = "failed to get connection after activation: " + err.Error()
+			return status
+		}
 	}
 
 	return h.inspectNodeClient(node, client)

@@ -16,6 +16,7 @@ export default function Sidebar({ currentView, onNavigate, projectActive, nodeAc
         <NavBtn label="项目主页" active={currentView === 'project_home'} onClick={() => onNavigate('project_home')} />
         <NavBtn label="集群主页" active={currentView === 'cluster_home'} onClick={() => onNavigate('cluster_home')} disabled={!projectActive} />
         <NavBtn label="组件主页" active={currentView === 'component_home'} onClick={() => onNavigate('component_home')} disabled={!projectActive} />
+        <NavBtn label="主机管理" active={currentView === 'host_management'} onClick={() => onNavigate('host_management')} />
       </Section>
 
       <div style={{ marginBottom: '0.75rem', padding: '0 1rem' }}>

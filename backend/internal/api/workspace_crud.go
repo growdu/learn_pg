@@ -233,12 +233,16 @@ func (h *Handler) ServeProjectByID(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, r, http.StatusNotFound, err.Error())
 			return
 		}
-		project, _ := h.workspace.GetProject(id)
-		writeJSON(w, r, http.StatusOK, map[string]interface{}{
-			"success":  true,
-			"project":  MaskProject(*project),
-		})
+	project, err := h.workspace.GetProject(id)
+	if err != nil || project == nil {
+		h.writeError(w, r, http.StatusNotFound, "project not found")
 		return
+	}
+	writeJSON(w, r, http.StatusOK, map[string]interface{}{
+		"success":  true,
+		"project":  MaskProject(*project),
+	})
+	return
 
 	case http.MethodDelete:
 		if err := h.workspace.DeleteProjectLocked(id); err != nil {
@@ -369,12 +373,16 @@ func (h *Handler) ServeClusterByID(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, r, http.StatusInternalServerError, err.Error())
 			return
 		}
-		updated, _, _ := h.findClusterByID(clusterID)
-		writeJSON(w, r, http.StatusOK, map[string]interface{}{
-			"success":  true,
-			"cluster":  MaskCluster(*updated),
-		})
+	updated, _, err := h.findClusterByID(clusterID)
+	if err != nil || updated == nil {
+		h.writeError(w, r, http.StatusNotFound, "cluster not found")
 		return
+	}
+	writeJSON(w, r, http.StatusOK, map[string]interface{}{
+		"success":  true,
+		"cluster":  MaskCluster(*updated),
+	})
+	return
 
 	case http.MethodDelete:
 		cluster, projectID, err := h.findClusterByID(clusterID)
