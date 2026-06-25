@@ -250,6 +250,7 @@
 - 2026-05-12：M5 完成 — ProvisionService Provider 抽象、DockerProvider、LocalProvider、ServeProvisionSingle 重构、ServeClusterTeardown 端点、前端 Task 面板。
 - 2026-05-12：M1 完成 — workspace_store 增量读写、workspace_crud 资源式 CRUD、API 密码脱敏返回、前端移除 localStorage workspace/profile 持久化。
 - 2026-05-14：M8 完成 — 删除 provision fallback、TemplateDialog 增加 preview/create 模式选择、Playwright E2E 测试骨架、docker-compose.e2e.yml、后端 API 单元测试、ops.md 联调检查清单。
+- 2026-06-24：修复 host_crud.go 闭包返回值编译错误、clog/wal 测试数据错误（WAL magic 未写入、TransactionsPerSegment 大小写、HEAP3/OP_16 期望值）。
 
 ## 9. 当前进度摘要
 
