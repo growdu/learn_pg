@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum RmgrId {
-    XLOG = 0,
+    Xlog = 0,
     Heap2 = 1,
     Heap = 2,
     Btree = 3,
@@ -22,13 +22,13 @@ pub enum RmgrId {
     Heap3 = 10,
     Logical = 11,
     /// Keep this last - it's the count of known RMGRs
-    MaxRmgrId,
+    MaxRmgr,
 }
 
 impl From<u8> for RmgrId {
     fn from(v: u8) -> Self {
         match v {
-            0 => RmgrId::XLOG,
+            0 => RmgrId::Xlog,
             1 => RmgrId::Heap2,
             2 => RmgrId::Heap,
             3 => RmgrId::Btree,
@@ -40,7 +40,7 @@ impl From<u8> for RmgrId {
             9 => RmgrId::Standby,
             10 => RmgrId::Heap3,
             11 => RmgrId::Logical,
-            _ => RmgrId::MaxRmgrId,
+            _ => RmgrId::MaxRmgr,
         }
     }
 }
@@ -48,7 +48,7 @@ impl From<u8> for RmgrId {
 impl RmgrId {
     pub fn name(&self) -> &'static str {
         match self {
-            RmgrId::XLOG => "XLOG",
+            RmgrId::Xlog => "Xlog",
             RmgrId::Heap2 => "Heap2",
             RmgrId::Heap => "Heap",
             RmgrId::Btree => "Btree",
@@ -60,7 +60,7 @@ impl RmgrId {
             RmgrId::Standby => "Standby",
             RmgrId::Heap3 => "Heap3",
             RmgrId::Logical => "Logical",
-            RmgrId::MaxRmgrId => "Unknown",
+            RmgrId::MaxRmgr => "Unknown",
         }
     }
 }
@@ -68,10 +68,10 @@ impl RmgrId {
 pub fn operation_name(rmgr_id: u8, info: u8) -> String {
     match rmgr_id {
         0 => match info & 0x0F {
-            0x00 => "XLOG_NOOP".to_string(),
-            0x01 => "XLOG/NEXTOID".to_string(),
-            0x02 => "XLOG/SLRU".to_string(),
-            op => format!("XLOG/OP_{}", op),
+            0x00 => "Xlog_NOOP".to_string(),
+            0x01 => "Xlog/NEXTOID".to_string(),
+            0x02 => "Xlog/SLRU".to_string(),
+            op => format!("Xlog/OP_{}", op),
         },
         1 => match info {
             0x00 => "HEAP2/CLEAN".to_string(),
@@ -332,23 +332,12 @@ pub const PROBE_TARGETS: &[(&str, ProbeTarget)] = &[
 ];
 
 /// Runtime probe status
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProbeStatus {
     pub name: String,
     pub enabled: bool,
     pub hit_count: u64,
     pub error_count: u64,
-}
-
-impl Default for ProbeStatus {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            enabled: false,
-            hit_count: 0,
-            error_count: 0,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -357,16 +346,16 @@ mod tests {
 
     #[test]
     fn test_rmgr_id_name() {
-        assert_eq!(RmgrId::XLOG.name(), "XLOG");
+        assert_eq!(RmgrId::Xlog.name(), "Xlog");
         assert_eq!(RmgrId::Heap.name(), "Heap");
         assert_eq!(RmgrId::Btree.name(), "Btree");
     }
 
     #[test]
     fn test_rmgr_id_from_u8() {
-        assert_eq!(RmgrId::from(0u8), RmgrId::XLOG);
+        assert_eq!(RmgrId::from(0u8), RmgrId::Xlog);
         assert_eq!(RmgrId::from(3u8), RmgrId::Btree);
-        assert_eq!(RmgrId::from(99u8), RmgrId::MaxRmgrId);
+        assert_eq!(RmgrId::from(99u8), RmgrId::MaxRmgr);
     }
 
     #[test]

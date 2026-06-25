@@ -112,7 +112,7 @@ async fn ws_sender(
                                     match evt {
                                         Some(event) => {
                                             let json = serde_json::to_string(&event).unwrap();
-                                            if write.send(Message::Text(json.into())).await.is_err() {
+                                            if write.send(Message::Text(json)).await.is_err() {
                                                 break;
                                             }
                                         }
@@ -204,7 +204,7 @@ async fn main() -> Result<()> {
             let tx = tx_clone.clone();
             let events = wal_events;
             let seen = seen_lsns.len();
-            let _ = rt_handle.block_on(async move {
+            rt_handle.block_on(async move {
                 for event in events {
                     let _ = tx.send(wal_to_event(event)).await;
                 }
