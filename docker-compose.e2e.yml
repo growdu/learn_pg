@@ -1,13 +1,20 @@
 version: '3.8'
 
-# E2E test environment - provides PostgreSQL instance for testing
+# E2E test environment.
+# Services: postgres (shared DB), backend (API), frontend (nginx)
+# Usage: docker compose -f docker-compose.e2e.yml up --build
+# Then: cd e2e && pnpm install && pnpm test
+
 services:
-  postgres_for_e2e:
-    image: postgres:16
+  postgres:  # Shared DB for both backend and E2E test queries
+    image: docker.m.daocloud.io/library/postgres:16
+    container_name: pgv-e2e-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
+      POSTGRES_HOST_AUTH_METHOD: trust
+      PGDATA: /var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
@@ -17,9 +24,64 @@ services:
       retries: 10
       start_period: 5s
     networks:
-      - e2e-network
+      - pgv-e2e-net
+    volumes:
+      - pgv_e2e_data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pgv-e2e-backend
+    environment:
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_USER: postgres
+      PG_PASSWORD: postgres
+      PG_DATABASE: postgres
+      API_PORT: 3000
+      COLLECTOR_WS_URL: ws://collector:8090
+      PG_DATA_DIR: /var/lib/postgresql/data
+    ports:
+      - "3010:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - pgv-e2e-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - pgv_e2e_data:/var/lib/postgresql/data:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.e2e
+    container_name: pgv-e2e-frontend
+    ports:
+      - "3001:80"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - pgv-e2e-net
+
+volumes:
+  pgv_e2e_data:
 
 networks:
-  e2e-network:
-    name: pg-visualizer-e2e
+  pgv-e2e-net:
+    name: pgv-e2e-net
     driver: bridge
