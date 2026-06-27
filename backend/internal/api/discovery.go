@@ -87,7 +87,8 @@ func (h *Handler) ServeDiscoveryHostScan(w http.ResponseWriter, r *http.Request)
 		port = 5432
 	}
 
-	addr := fmt.Sprintf("%s:%d", host, port)
+	resolvedHost := resolveLocalhost(host)
+	addr := fmt.Sprintf("%s:%d", resolvedHost, port)
 
 	// Step 1: TCP connectivity check
 	if !portOpen(addr, 900*time.Millisecond) {
@@ -188,13 +189,20 @@ func (h *Handler) ServeDiscoveryDSNValidate(w http.ResponseWriter, r *http.Reque
 	}
 	host, port, user, pass, db, err := parseDSN(req.DSN)
 	if err != nil {
+		// DSN itself is malformed/unparseable — surface as success=false.
 		writeJSON(w, r, 200, dsnValidateResponse{Success: false, Reachable: false, Error: err.Error()})
 		return
 	}
 	client := &pgClientProxy{}
-	version, err := client.connectAndVersion(host, port, user, pass, db)
-	if err != nil {
-		writeJSON(w, r, 200, dsnValidateResponse{Success: false, Reachable: false, Error: err.Error()})
+	version, connErr := client.connectAndVersion(host, port, user, pass, db)
+	if connErr != nil {
+		// DSN parsed fine, but PostgreSQL is unreachable — surface as success=true, reachable=false.
+		writeJSON(w, r, 200, dsnValidateResponse{
+			Success:       true,
+			Reachable:     false,
+			NormalizedDSN: req.DSN,
+			Error:         connErr.Error(),
+		})
 		return
 	}
 	writeJSON(w, r, 200, dsnValidateResponse{Success: true, Reachable: true, Version: version, NormalizedDSN: req.DSN})

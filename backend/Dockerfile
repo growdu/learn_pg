@@ -21,7 +21,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o server ./cmd/server
 
 # Production stage
-FROM docker.m.daocloud.io/library/alpine:latest
+FROM docker.m.daocloud.io/library/alpine:3.19
 
 RUN apk add --no-cache ca-certificates wget docker-cli && \
     wget -q https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64 -O /usr/local/bin/docker-compose && \

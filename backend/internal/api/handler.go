@@ -155,11 +155,11 @@ func (h *Handler) ServeLivez(w http.ResponseWriter, r *http.Request) {
 // ─── Connect ─────────────────────────────────────────────────────────────────
 
 type connectRequest struct {
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	User     string `json:"user"`
-	Password string `json:"password"`
-	Database string `json:"database"`
+	Host     *string `json:"host"`
+	Port     *int    `json:"port"`
+	User     *string `json:"user"`
+	Password *string `json:"password"`
+	Database *string `json:"database"`
 }
 
 type connectResponse struct {
@@ -188,31 +188,50 @@ func (h *Handler) ServeConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	host := orDefaultStr(req.Host, h.config.PGHost)
-	port := orDefaultInt(req.Port, h.config.PGPort)
-	user := orDefaultStr(req.User, h.config.PGUser)
-	password := orDefaultStr(req.Password, h.config.PGPassword)
-	db := orDefaultStr(req.Database, h.config.PGDatabase)
+	hostVal := h.config.PGHost
+	if req.Host != nil {
+		if *req.Host == "" {
+			h.writeError(w, r, http.StatusBadRequest, "host is required")
+			return
+		}
+		hostVal = *req.Host
+	}
+	portVal := h.config.PGPort
+	if req.Port != nil {
+		portVal = *req.Port
+	}
+	userVal := h.config.PGUser
+	if req.User != nil {
+		userVal = *req.User
+	}
+	passwordVal := h.config.PGPassword
+	if req.Password != nil {
+		passwordVal = *req.Password
+	}
+	dbVal := h.config.PGDatabase
+	if req.Database != nil {
+		dbVal = *req.Database
+	}
 
 	client := &pg.Client{}
-	if err := client.Connect(host, port, user, password, db); err != nil {
+	if err := client.Connect(hostVal, portVal, userVal, passwordVal, dbVal); err != nil {
 		h.writeError(w, r, http.StatusBadGateway, err.Error())
 		return
 	}
 
 	h.connMgr.Register("__direct__", connection.Config{
-		Host:     host,
-		Port:     port,
-		User:     user,
-		Password: password,
-		Database: db,
+		Host:     hostVal,
+		Port:     portVal,
+		User:     userVal,
+		Password: passwordVal,
+		Database: dbVal,
 	})
 	h.connMgr.Activate("__direct__")
 
 	version, _ := client.GetVersion()
 	dataDir, _ := client.GetPGDataDir()
 
-	slog.Info("PG connected", "host", host, "port", port, "db", db, "version", version)
+	slog.Info("PG connected", "host", hostVal, "port", portVal, "db", dbVal, "version", version)
 	writeJSON(w, r, http.StatusOK, connectResponse{
 		Success: true,
 		Version: version,

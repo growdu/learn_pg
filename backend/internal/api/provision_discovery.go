@@ -135,6 +135,24 @@ func genID(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 }
 
+// resolveLocalhost maps localhost references to the host machine when running
+// inside a Docker container. This allows DSNs like postgres://localhost:5432
+// to work in containerized E2E and production environments.
+func resolveLocalhost(host string) string {
+	if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+		return host
+	}
+	// Check if we're running inside Docker by looking for /.dockerenv
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		// Use getent to resolve host.docker.internal (available on most Linux systems
+		// when Docker's extra hosts feature is enabled)
+		if addrs, err := net.LookupHost("host.docker.internal"); err == nil && len(addrs) > 0 {
+			return addrs[0]
+		}
+	}
+	return host
+}
+
 func parseDSN(dsn string) (host string, port int, user, pass, db string, err error) {
 	u, err := url.Parse(strings.TrimSpace(dsn))
 	if err != nil {
@@ -177,6 +195,7 @@ func portOpen(addr string, timeout time.Duration) bool {
 
 // pgIsReady checks if a PostgreSQL instance is accepting connections using pg_isready.
 func pgIsReady(host string, port int) (version string, reachable bool) {
+	host = resolveLocalhost(host)
 	c := &pg.Client{}
 	dbs := []string{"template1", "postgres"}
 	for _, db := range dbs {
@@ -191,6 +210,7 @@ func pgIsReady(host string, port int) (version string, reachable bool) {
 }
 
 func waitForPostgres(ctx context.Context, host string, port int) error {
+	host = resolveLocalhost(host)
 	addr := fmt.Sprintf("%s:%d", host, port)
 	for i := 0; i < 30; i++ {
 		select {
@@ -226,6 +246,7 @@ func (h *Handler) tryConnectNode(node workspaceNode) error {
 type pgClientProxy struct{}
 
 func (p *pgClientProxy) connectAndVersion(host string, port int, user, password, db string) (string, error) {
+	host = resolveLocalhost(host)
 	c := &pg.Client{}
 	if err := c.Connect(host, port, user, password, db); err != nil {
 		return "", err
