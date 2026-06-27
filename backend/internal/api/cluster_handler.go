@@ -61,12 +61,19 @@ func (h *Handler) ServeClusterTeardown(w http.ResponseWriter, r *http.Request) {
 		if node.Host != "localhost" && node.Host != "127.0.0.1" && node.Host != "" {
 			providerID = "ssh"
 		}
+		containerID := node.ContainerID
+		if containerID == "" {
+			containerID = node.ID
+		}
+		// Docker provider convention: volume name is containerName + "-data".
+		// Empty DataDir still works for non-Docker providers (ssh/local).
+		dataDir := containerID + "-data"
 		info := provision.InstanceInfo{
 			ProviderID:  providerID,
-			ContainerID: node.ID,
+			ContainerID: containerID,
 			Host:        node.Host,
 			Port:        node.Port,
-			DataDir:     "",
+			DataDir:     dataDir,
 		}
 		if err := h.provisionService.StopInstance(r.Context(), info); err != nil {
 			slog.Warn("failed to stop instance", "node", node.ID, "error", err)

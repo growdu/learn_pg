@@ -86,6 +86,27 @@ export async function provisionSingle(
   return { taskId: data.taskId }
 }
 
+/**
+ * Teardown a cluster: stops any Docker containers it provisioned and removes
+ * the cluster from the workspace. Safe to call even if the cluster is already
+ * gone — the API returns 404 in that case, which we ignore.
+ */
+export async function teardownCluster(
+  api: APIRequestContext,
+  clusterId: string,
+  cleanupData = true,
+): Promise<void> {
+  if (!clusterId) return
+  const res = await api.post(`/api/clusters/${clusterId}/teardown`, {
+    data: { cleanupData },
+  })
+  if (!res.ok() && res.status() !== 404) {
+    // Best-effort cleanup; log but don't fail the test
+    // eslint-disable-next-line no-console
+    console.warn(`teardown ${clusterId} returned ${res.status()}: ${await res.text()}`)
+  }
+}
+
 export async function listProvisionTasks(
   api: APIRequestContext,
 ): Promise<{ count: number; tasks: Array<{ taskId: string; status: string }> }> {

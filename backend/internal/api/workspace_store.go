@@ -33,6 +33,7 @@ type workspaceNode struct {
 	ConnectionStatus  string                 `json:"connectionStatus,omitempty"`
 	LastError         string                 `json:"lastError,omitempty"`
 	HostId            string                 `json:"hostId,omitempty"`
+	ContainerID       string                 `json:"containerId,omitempty"`
 }
 
 type workspaceCluster struct {
@@ -610,10 +611,11 @@ func MaskNode(n workspaceNode) workspaceNode {
 
 // MaskCluster returns a copy of the cluster with all node passwords masked.
 func MaskCluster(c workspaceCluster) workspaceCluster {
-	c.Nodes = make([]workspaceNode, len(c.Nodes))
-	for i := range c.Nodes {
-		c.Nodes[i] = MaskNode(c.Nodes[i])
+	nodes := make([]workspaceNode, len(c.Nodes))
+	for i, n := range c.Nodes {
+		nodes[i] = MaskNode(n)
 	}
+	c.Nodes = nodes
 	return c
 }
 
