@@ -133,6 +133,14 @@ func (m *Manager) GetActive() (string, *pg.Client) {
 	return nodeId, client
 }
 
+// Count returns the number of currently registered connections. Used by
+// the metrics scrape to report pg_connections without holding a ref.
+func (m *Manager) Count() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.conns)
+}
+
 // Health checks if the node's connection is alive.
 func (m *Manager) Health(nodeId string) (bool, error) {
 	m.mu.RLock()

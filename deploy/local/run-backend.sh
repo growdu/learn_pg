@@ -35,7 +35,17 @@ BACKEND_BIN="$PROJECT_ROOT/backend/server"
 if [ ! -f "$BACKEND_BIN" ] || [ "$PROJECT_ROOT/backend" -nt "$BACKEND_BIN" ]; then
     echo "Building backend..."
     cd "$PROJECT_ROOT/backend"
-    go build -o "$BACKEND_BIN" ./cmd/server
+    # Inject build metadata so /version reports useful information.
+    # Commit/build date fall back to "dev" / "unknown" via the metrics package.
+    VERSION="${VERSION:-$(git -C "$PROJECT_ROOT" describe --tags --always --dirty 2>/dev/null || echo dev)}"
+    COMMIT="${COMMIT:-$(git -C "$PROJECT_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)}"
+    BUILD_DATE="${BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+    GO_VERSION="$(go version | awk '{print $3}')"
+    LDFLAGS="-X pg-visualizer-backend/internal/metrics.BuildInfo.Version=$VERSION \
+             -X pg-visualizer-backend/internal/metrics.BuildInfo.Commit=$COMMIT \
+             -X pg-visualizer-backend/internal/metrics.BuildInfo.BuildDate=$BUILD_DATE \
+             -X pg-visualizer-backend/internal/metrics.BuildInfo.GoVersion=$GO_VERSION"
+    go build -ldflags "$LDFLAGS" -o "$BACKEND_BIN" ./cmd/server
 fi
 
 # Set environment variables

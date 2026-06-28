@@ -18,7 +18,16 @@ RUN go mod download
 COPY . .
 
 # Build
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o server ./cmd/server
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE=unknown
+ARG GO_VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo \
+    -ldflags "-X pg-visualizer-backend/internal/metrics.BuildInfo.Version=${VERSION} \
+              -X pg-visualizer-backend/internal/metrics.BuildInfo.Commit=${COMMIT} \
+              -X pg-visualizer-backend/internal/metrics.BuildInfo.BuildDate=${BUILD_DATE} \
+              -X pg-visualizer-backend/internal/metrics.BuildInfo.GoVersion=${GO_VERSION}" \
+    -o server ./cmd/server
 
 # Production stage
 FROM docker.m.daocloud.io/library/alpine:3.19

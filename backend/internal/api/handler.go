@@ -1232,6 +1232,8 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	mux.HandleFunc("/health", h.ServeHealth)
 	mux.HandleFunc("/readyz", h.ServeReadyz)
 	mux.HandleFunc("/livez", h.ServeLivez)
+	mux.HandleFunc("/version", h.ServeVersion)
+	mux.Handle("/metrics", h.metricsHandler())
 	mux.HandleFunc("/api/connect", h.ServeConnect)
 	mux.HandleFunc("/api/execute", h.ServeExecute)
 	mux.HandleFunc("/api/workspace/projects", h.ServeWorkspaceProjects)
@@ -1239,23 +1241,23 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	mux.HandleFunc("/api/projects", h.ServeProjectList)
 	mux.HandleFunc("/api/projects/", h.ServeProjectByID)
 	mux.HandleFunc("/api/clusters/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/teardown") && r.Method == http.MethodPost {
-			h.ServeClusterTeardown(w, r)
-			return
-		}
-		h.ServeClusterByID(w, r)
+	if strings.HasSuffix(r.URL.Path, "/teardown") && r.Method == http.MethodPost {
+	h.ServeClusterTeardown(w, r)
+	return
+	}
+	h.ServeClusterByID(w, r)
 	})
 	// Cluster overview: GET /api/cluster/{id}/overview (new) and POST /api/cluster/overview (legacy)
 	mux.HandleFunc("/api/cluster/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/overview") {
-			h.ServeClusterOverview(w, r)
-			return
-		}
-		if r.Method == http.MethodPost && r.URL.Path == "/api/cluster/overview" {
-			h.ServeClusterOverviewLegacy(w, r)
-			return
-		}
-		h.writeError(w, r, http.StatusNotFound, "not found")
+	if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/overview") {
+	h.ServeClusterOverview(w, r)
+	return
+	}
+	if r.Method == http.MethodPost && r.URL.Path == "/api/cluster/overview" {
+	h.ServeClusterOverviewLegacy(w, r)
+	return
+	}
+	h.writeError(w, r, http.StatusNotFound, "not found")
 	})
 	mux.HandleFunc("/api/cluster/node/inspect", h.ServeClusterNodeInspect)
 	mux.HandleFunc("/api/wal", h.ServeWAL)
@@ -1277,30 +1279,30 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 
 	// Node activation/deactivation/register/status dispatcher
 	mux.HandleFunc("/api/nodes/", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			if strings.HasSuffix(r.URL.Path, "/activate") {
-				h.ServeNodeActivate(w, r)
-				return
-			}
-			if strings.HasSuffix(r.URL.Path, "/deactivate") {
-				h.ServeNodeDeactivate(w, r)
-				return
-			}
-			if strings.HasSuffix(r.URL.Path, "/register") {
-				h.ServeNodeRegister(w, r)
-				return
-			}
-			h.writeError(w, r, http.StatusNotFound, "not found")
-		case http.MethodGet:
-			if strings.HasSuffix(r.URL.Path, "/status") {
-				h.ServeNodeStatus(w, r)
-				return
-			}
-			h.ServeNodeByID(w, r)
-		default:
-			h.writeError(w, r, http.StatusMethodNotAllowed, "POST/GET required")
-		}
+	switch r.Method {
+	case http.MethodPost:
+	if strings.HasSuffix(r.URL.Path, "/activate") {
+	h.ServeNodeActivate(w, r)
+	return
+	}
+	if strings.HasSuffix(r.URL.Path, "/deactivate") {
+	h.ServeNodeDeactivate(w, r)
+	return
+	}
+	if strings.HasSuffix(r.URL.Path, "/register") {
+	h.ServeNodeRegister(w, r)
+	return
+	}
+	h.writeError(w, r, http.StatusNotFound, "not found")
+	case http.MethodGet:
+	if strings.HasSuffix(r.URL.Path, "/status") {
+	h.ServeNodeStatus(w, r)
+	return
+	}
+	h.ServeNodeByID(w, r)
+	default:
+	h.writeError(w, r, http.StatusMethodNotAllowed, "POST/GET required")
+	}
 	})
 
 	// Host CRUD

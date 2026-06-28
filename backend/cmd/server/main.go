@@ -14,6 +14,7 @@ import (
 	"pg-visualizer-backend/internal/config"
 	"pg-visualizer-backend/internal/connection"
 	"pg-visualizer-backend/internal/middleware"
+	"pg-visualizer-backend/internal/metrics"
 	"pg-visualizer-backend/internal/ws"
 )
 
@@ -76,6 +77,7 @@ func main() {
 	finalHandler = middleware.RequestID(finalHandler)
 	finalHandler = middleware.Logger(finalHandler)
 	finalHandler = middleware.CORS(finalHandler)
+	finalHandler = metrics.HTTPMiddleware(finalHandler)
 
 	// HTTP server with timeouts
 	addr := fmt.Sprintf(":%d", cfg.APIPort)
