@@ -16,6 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"pg-visualizer-backend/internal/api/openapi"
 	"pg-visualizer-backend/internal/connection"
 	"pg-visualizer-backend/internal/config"
 	"pg-visualizer-backend/internal/middleware"
@@ -1233,6 +1234,7 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	mux.HandleFunc("/readyz", h.ServeReadyz)
 	mux.HandleFunc("/livez", h.ServeLivez)
 	mux.HandleFunc("/version", h.ServeVersion)
+	mux.HandleFunc("/api/openapi.json", openapi.Handler())
 	mux.Handle("/metrics", h.metricsHandler())
 	mux.HandleFunc("/api/connect", h.ServeConnect)
 	mux.HandleFunc("/api/execute", h.ServeExecute)

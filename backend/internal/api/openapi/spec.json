@@ -1,0 +1,271 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "learn_pg Backend API",
+    "version": "1.0.0",
+    "description": "HTTP + WebSocket API for the PostgreSQL kernel visualizer. All paths under /api/* are JSON. /ws is a WebSocket endpoint. /health, /readyz, /livez, /version, /metrics are operational endpoints."
+  },
+  "servers": [
+    { "url": "http://localhost:3010", "description": "Local dev" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "Static API key. Required when BACKEND_API_KEY is set on the server. The dev build leaves the key unset and accepts any request."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "properties": { "error": { "type": "string" } }
+      },
+      "Version": {
+        "type": "object",
+        "properties": {
+          "version":    { "type": "string" },
+          "commit":     { "type": "string" },
+          "build_date": { "type": "string" },
+          "go_version": { "type": "string" }
+        }
+      },
+      "ConnectRequest": {
+        "type": "object",
+        "required": ["host", "port", "user", "password", "database"],
+        "properties": {
+          "host":     { "type": "string" },
+          "port":     { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "user":     { "type": "string" },
+          "password": { "type": "string" },
+          "database": { "type": "string" }
+        }
+      },
+      "ExecuteRequest": {
+        "type": "object",
+        "required": ["sql"],
+        "properties": {
+          "sql":      { "type": "string" },
+          "params":   { "type": "array" }
+        }
+      },
+      "ExecuteResponse": {
+        "type": "object",
+        "properties": {
+          "columns":   { "type": "array", "items": { "type": "string" } },
+          "rows":      { "type": "array", "items": {} },
+          "row_count": { "type": "integer" },
+          "duration":  { "type": "string" }
+        }
+      },
+      "WorkspaceProject": {
+        "type": "object",
+        "properties": {
+          "id":         { "type": "string" },
+          "name":       { "type": "string" },
+          "host":       { "type": "string" },
+          "port":       { "type": "integer" },
+          "user":       { "type": "string" },
+          "database":   { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ProvisionRequest": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type":     { "type": "string", "enum": ["single", "physical", "logical"] },
+          "base_dir": { "type": "string", "description": "PG data dir for the new instance" },
+          "port":     { "type": "integer" },
+          "user":     { "type": "string" },
+          "password": { "type": "string" },
+          "database": { "type": "string" }
+        }
+      },
+      "ProvisionTask": {
+        "type": "object",
+        "properties": {
+          "task_id":   { "type": "string" },
+          "type":      { "type": "string" },
+          "status":    { "type": "string", "enum": ["pending", "running", "succeeded", "failed", "cancelled"] },
+          "started_at":  { "type": "string", "format": "date-time" },
+          "finished_at": { "type": "string", "format": "date-time" },
+          "error":     { "type": "string" },
+          "result":    {}
+        }
+      }
+    }
+  },
+  "security": [{ "ApiKeyAuth": [] }],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Liveness probe (process up)",
+        "security": [],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/livez": {
+      "get": {
+        "summary": "Liveness probe (process up). Alias of /health.",
+        "security": [],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "summary": "Readiness probe (all deps up).",
+        "security": [],
+        "responses": {
+          "200": { "description": "Ready" },
+          "503": { "description": "Not ready", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/version": {
+      "get": {
+        "summary": "Build version and metadata",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Version" } } }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Prometheus scrape endpoint. Text exposition format.",
+        "security": [],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/api/connect": {
+      "post": {
+        "summary": "Connect to a PostgreSQL instance",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ConnectRequest" } } }
+        },
+        "responses": {
+          "200": { "description": "Connected" },
+          "400": { "description": "Bad request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "500": { "description": "Connection failure", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/execute": {
+      "post": {
+        "summary": "Run a SQL statement on the active connection",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExecuteRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "Result",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExecuteResponse" } } }
+          },
+          "400": { "description": "Bad request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
+      }
+    },
+    "/api/workspace/projects": {
+      "get": { "summary": "List saved workspace projects", "responses": { "200": { "description": "OK" } } },
+      "post": {
+        "summary": "Create a workspace project",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceProject" } } }
+        },
+        "responses": { "201": { "description": "Created" }, "400": { "description": "Bad request" } }
+      }
+    },
+    "/api/workspace/projects/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get":    { "summary": "Get a project",   "responses": { "200": { "description": "OK" }, "404": { "description": "Not found" } } },
+      "put":    { "summary": "Update a project","requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorkspaceProject" } } } }, "responses": { "200": { "description": "OK" } } },
+      "delete": { "summary": "Delete a project","responses": { "204": { "description": "Deleted" } } }
+    },
+    "/api/projects": {
+      "get": { "summary": "List active PG projects/clusters", "responses": { "200": { "description": "OK" } } }
+    },
+    "/api/projects/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get":    { "summary": "Get a project",   "responses": { "200": { "description": "OK" } } },
+      "delete": { "summary": "Delete a project","responses": { "204": { "description": "Deleted" } } }
+    },
+    "/api/cluster/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": { "summary": "Cluster inspect (control plane)", "responses": { "200": { "description": "OK" } } }
+    },
+    "/api/cluster/node/inspect": {
+      "get": { "summary": "Inspect a node", "responses": { "200": { "description": "OK" } } }
+    },
+    "/api/wal": {
+      "get": { "summary": "Tail the active PG WAL stream", "responses": { "200": { "description": "OK" } } }
+    },
+    "/api/wal/segments": {
+      "get": { "summary": "List WAL segments on disk", "responses": { "200": { "description": "OK" } } }
+    },
+    "/api/clog": {
+      "get": { "summary": "CLOG summary (current xid, oldest xmin)", "responses": { "200": { "description": "OK" } } }
+    },
+    "/api/clog/status": {
+      "get": { "summary": "CLOG subsystem status", "responses": { "200": { "description": "OK" } } }
+    },
+    "/api/clog/{file}": {
+      "parameters": [{ "name": "file", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": { "summary": "Read a CLOG file page", "responses": { "200": { "description": "OK" } } }
+    },
+    "/api/snapshot": {
+      "get": { "summary": "Internal buffer/heap snapshot (debug)", "responses": { "200": { "description": "OK" } } }
+    },
+    "/api/provision/single":   { "post": { "summary": "Provision a single-node PG instance", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProvisionRequest" } } } }, "responses": { "202": { "description": "Accepted, task_id returned" } } } },
+    "/api/provision/physical": { "post": { "summary": "Provision via physical streaming replica", "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProvisionRequest" } } } }, "responses": { "202": { "description": "Accepted" } } } },
+    "/api/provision/logical":   { "post": { "summary": "Provision via logical replication",       "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProvisionRequest" } } } }, "responses": { "202": { "description": "Accepted" } } } },
+    "/api/provision/tasks": {
+      "get": { "summary": "List provision tasks", "responses": { "200": { "description": "OK" } } }
+    },
+    "/api/provision/tasks/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get":    { "summary": "Get a task",     "responses": { "200": { "description": "OK" } } },
+      "delete": { "summary": "Cancel a task",  "responses": { "204": { "description": "Cancelled" } } }
+    },
+    "/api/discovery/host/scan":  { "post": { "summary": "Scan local network for PG hosts", "responses": { "200": { "description": "OK" } } } },
+    "/api/discovery/host/import":{ "post": { "summary": "Import a discovered host as a project", "responses": { "200": { "description": "OK" } } } },
+    "/api/discovery/dsn/validate":{ "post": { "summary": "Validate a DSN string (parse + connect)", "responses": { "200": { "description": "OK" } } } },
+    "/api/discovery/dsn/import":  { "post": { "summary": "Import a DSN as a project", "responses": { "200": { "description": "OK" } } } },
+    "/api/hosts": {
+      "get": { "summary": "List hosts (from collector)", "responses": { "200": { "description": "OK" } } }
+    },
+    "/api/hosts/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get":    { "summary": "Get a host",   "responses": { "200": { "description": "OK" } } },
+      "delete": { "summary": "Delete a host","responses": { "204": { "description": "Deleted" } } }
+    },
+    "/api/tasks": {
+      "get": { "summary": "List tasks", "responses": { "200": { "description": "OK" } } }
+    },
+    "/api/tasks/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get":    { "summary": "Get a task",   "responses": { "200": { "description": "OK" } } },
+      "delete": { "summary": "Delete a task","responses": { "204": { "description": "Deleted" } } }
+    },
+    "/api/nodes/{id}": {
+      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": { "summary": "Node inspection", "responses": { "200": { "description": "OK" } } }
+    },
+    "/ws": {
+      "get": {
+        "summary": "WebSocket upgrade. Pushes real-time events from the collector (WAL, CLOG, buffer, plan).",
+        "security": [],
+        "responses": { "101": { "description": "Switching Protocols" } }
+      }
+    }
+  }
+}
