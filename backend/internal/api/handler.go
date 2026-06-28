@@ -14,6 +14,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
+
 	"pg-visualizer-backend/internal/connection"
 	"pg-visualizer-backend/internal/config"
 	"pg-visualizer-backend/internal/middleware"
@@ -128,31 +130,100 @@ func (h *Handler) ServeHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ServeReadyz handles GET /readyz — readiness probe (all deps up)
+// ServeReadyz handles GET /readyz — readiness probe (all deps up).
+//
+// We check the things the backend cannot serve traffic without:
+//   1. data/ directory is writable (workspace JSON, provision tasks)
+//   2. workspace_projects.json is parseable (not corrupted)
+//
+// We do NOT require an active user-connected PG here — that is a property
+// of the user's session, not the service. If COLLECTOR_WS_URL is set we
+// also probe it, but a collector outage is "degraded" not "not_ready":
+// the rest of the API (workspace CRUD, provision, top-level reads) still
+// functions, just without real-time telemetry.
 func (h *Handler) ServeReadyz(w http.ResponseWriter, r *http.Request) {
-	_, client := h.connMgr.GetActive()
-	pgOK := client != nil && client.Ping() == nil
-	dataDir := h.pgDataDir()
-	dataDirOK := dataDir != "" && dirExists(dataDir)
+	// The "data dir" for service-level readiness is the parent of the
+	// workspace file — that's where we need write access for any CRUD.
+	dataDir := ""
+	if h.workspace != nil {
+		dataDir = filepath.Dir(h.workspace.path)
+	}
+	dataDirOK := dataDir != "" && dirExists(dataDir) && dirWritable(dataDir)
 
-	if pgOK && dataDirOK {
-		writeJSON(w, r, http.StatusOK, map[string]string{
-			"status":   "ready",
-			"pg":       "ok",
-			"data_dir": dataDir,
-		})
+	workspaceOK := false
+	if dataDirOK && h.workspace != nil {
+		// Probe read+parse without holding the lock; failures are not fatal
+		// because the workspace file may legitimately not exist on first boot.
+		if _, _, err := h.workspace.readSnapshot(); err == nil {
+			workspaceOK = true
+		} else {
+			workspaceOK = !fileExists(h.workspace.path)
+		}
+	}
+
+	collectorStatus := "skipped"
+	collectorOK := true // default to OK when not configured
+	if h.config != nil && h.config.CollectorWSURL != "" {
+		collectorOK, collectorStatus = probeWS(h.config.CollectorWSURL, 2*time.Second)
+	}
+
+	ready := dataDirOK && workspaceOK && collectorOK
+	resp := map[string]interface{}{
+		"data_dir":  dataDir,
+		"workspace": statusString(workspaceOK),
+		"collector": collectorStatus,
+	}
+	if ready {
+		resp["status"] = "ready"
+		writeJSON(w, r, http.StatusOK, resp)
 		return
 	}
 
-	status := "degraded"
-	if !pgOK {
-		status = "not_ready"
+	// 503 means "remove from load balancer pool"; we want a different body
+	// if only the collector is down so the operator can tell which dep is bad.
+	if !dataDirOK || !workspaceOK {
+		resp["status"] = "not_ready"
+		writeJSON(w, r, http.StatusServiceUnavailable, resp)
+		return
 	}
-	writeJSON(w, r, http.StatusServiceUnavailable, map[string]string{
-		"status":   status,
-		"pg":       map[bool]string{true: "ok", false: "unavailable"}[pgOK],
-		"data_dir": dataDir,
-	})
+	resp["status"] = "degraded"
+	writeJSON(w, r, http.StatusOK, resp)
+}
+
+func statusString(ok bool) string {
+	if ok {
+		return "ok"
+	}
+	return "fail"
+}
+
+// dirWritable reports whether the current process can create files in dir.
+func dirWritable(dir string) bool {
+	f, err := os.CreateTemp(dir, ".readyz-*")
+	if err != nil {
+		return false
+	}
+	_ = f.Close()
+	_ = os.Remove(f.Name())
+	return true
+}
+
+// fileExists is a tiny helper; avoids pulling in os.Stat boilerplate everywhere.
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// probeWS opens a WebSocket dial with timeout and immediately closes it. Used
+// for /readyz checks of the collector. Returns (reachable, status-string).
+func probeWS(url string, timeout time.Duration) (bool, string) {
+	dialer := websocket.Dialer{HandshakeTimeout: timeout}
+	conn, _, err := dialer.Dial(url, nil)
+	if err != nil {
+		return false, "unreachable"
+	}
+	_ = conn.Close()
+	return true, "ok"
 }
 
 // ServeLivez handles GET /livez — liveness probe (process alive)
