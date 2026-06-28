@@ -47,10 +47,31 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/livez"]
       interval: 10s
-      timeout: 5s
+      timeout: 3s
       retries: 3
+      start_period: 5s
+    # Hardening: run as non-root (also enforced by the image's USER
+    # directive), prevent privilege escalation via setuid binaries,
+    # and give the docker-cli a writable scratch area while keeping
+    # the rootfs read-only.
+    user: "65532:65532"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+      - /run:size=8m
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
 
   frontend:
     build:
