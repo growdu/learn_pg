@@ -77,6 +77,7 @@ func main() {
 	finalHandler = middleware.RequestID(finalHandler)
 	finalHandler = middleware.Logger(finalHandler)
 	finalHandler = middleware.CORS(finalHandler)
+	finalHandler = middleware.Security(finalHandler)
 	finalHandler = metrics.HTTPMiddleware(finalHandler)
 
 	// HTTP server with timeouts
