@@ -16,6 +16,7 @@ import (
 	"pg-visualizer-backend/internal/middleware"
 	"pg-visualizer-backend/internal/metrics"
 	"pg-visualizer-backend/internal/ratelimit"
+	"pg-visualizer-backend/internal/reporter"
 	"pg-visualizer-backend/internal/ws"
 )
 
@@ -69,6 +70,16 @@ func main() {
 	mux := http.NewServeMux()
 	api.SetupRoutes(handler, mux)
 
+	// Error reporter. No-op when REPORT_DSN is empty. We pull
+	// the project name from APP_ENV and the build version from
+	// APP_RELEASE (set by the same -ldflags as metrics.BuildInfo).
+	rep := reporter.New(reporter.Config{
+		DSN:         os.Getenv("REPORT_DSN"),
+		Environment: os.Getenv("APP_ENV"),
+		Release:     os.Getenv("APP_RELEASE"),
+	})
+	defer rep.Shutdown()
+
 	// Per-IP token-bucket rate limiter. Health/metrics/ws/version are exempt.
 	rateLimiter := ratelimit.New(ratelimit.Options{
 		Capacity:        60,
@@ -87,12 +98,17 @@ func main() {
 	//     it sits after Security (so 429 responses still get hardened).
 	//   - Metrics innermost so it sees the original handler status.
 	var finalHandler http.Handler = mux
+	finalHandler = middleware.Recover(rep)(finalHandler)
 	finalHandler = middleware.RequestID(finalHandler)
 	finalHandler = middleware.Logger(finalHandler)
 	finalHandler = middleware.CORS(finalHandler)
 	finalHandler = middleware.Security(finalHandler)
 	finalHandler = rateLimiter.Middleware(finalHandler)
 	finalHandler = metrics.HTTPMiddleware(finalHandler)
+	// Recover is outermost (wraps the chain) so it catches panics
+	// from any inner middleware, not just the route handler. The
+	// reporter pushes the event to Sentry in a goroutine so the
+	// response is never delayed.
 
 	// HTTP server with timeouts
 	addr := fmt.Sprintf(":%d", cfg.APIPort)
