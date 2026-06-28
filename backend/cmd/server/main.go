@@ -15,6 +15,7 @@ import (
 	"pg-visualizer-backend/internal/connection"
 	"pg-visualizer-backend/internal/middleware"
 	"pg-visualizer-backend/internal/metrics"
+	"pg-visualizer-backend/internal/ratelimit"
 	"pg-visualizer-backend/internal/ws"
 )
 
@@ -68,16 +69,29 @@ func main() {
 	mux := http.NewServeMux()
 	api.SetupRoutes(handler, mux)
 
-	// Middleware stack — each wraps the one before.
-	// Execution: CORS → Logger → RequestID → mux
-	// Logger is before RequestID so it reads the X-Request-Id response header
-	// that RequestID set (Go's ResponseWriter.Header and Request.Header are
-	// separate maps, so w.Header().Set() is not visible via r.Header.Get()).
+	// Per-IP token-bucket rate limiter. Health/metrics/ws/version are exempt.
+	rateLimiter := ratelimit.New(ratelimit.Options{
+		Capacity:        60,
+		RefillPerSecond: 20,
+	})
+
+	// Middleware stack — outer → inner, so request flow is:
+	//   RequestID → Logger → CORS → Security → RateLimit → Metrics → mux
+	// Order rationale:
+	//   - RequestID outermost so every log/metric/response carries the id.
+	//   - Logger next so it sees the final status (set by inner middleware
+	//     like RateLimit responding 429).
+	//   - CORS early so preflight OPTIONS never hits a 429.
+	//   - Security sets headers before any handler runs.
+	//   - RateLimit returns 429 *without* invoking downstream — that's why
+	//     it sits after Security (so 429 responses still get hardened).
+	//   - Metrics innermost so it sees the original handler status.
 	var finalHandler http.Handler = mux
 	finalHandler = middleware.RequestID(finalHandler)
 	finalHandler = middleware.Logger(finalHandler)
 	finalHandler = middleware.CORS(finalHandler)
 	finalHandler = middleware.Security(finalHandler)
+	finalHandler = rateLimiter.Middleware(finalHandler)
 	finalHandler = metrics.HTTPMiddleware(finalHandler)
 
 	// HTTP server with timeouts
