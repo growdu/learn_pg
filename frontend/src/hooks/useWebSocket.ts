@@ -1,4 +1,5 @@
 import { startTransition, useCallback, useEffect, useRef, useState } from 'react'
+import { addBreadcrumb } from '../lib/errorReporter'
 import { useEventStore } from '../stores/eventStore'
 import type { ProbeEvent } from '../types/events'
 
@@ -187,6 +188,11 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
     lastMessageAtRef.current = Date.now()
 
     ws.onopen = () => {
+      addBreadcrumb({
+        type: 'ws',
+        message: `WebSocket open: ${cfg.url}`,
+        data: { url: cfg.url, attempts: attemptsRef.current },
+      })
       attemptsRef.current = 0
       setStatus('open')
       setLastError(null)
@@ -222,6 +228,23 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
     }
 
     ws.onclose = (evt) => {
+      const atCap =
+        cfg.maxReconnectAttempts > 0 && attemptsRef.current >= cfg.maxReconnectAttempts
+      addBreadcrumb({
+        type: 'ws',
+        level: atCap && !evt.wasClean ? 'error' : 'info',
+        message: atCap
+          ? `WebSocket gave up after ${attemptsRef.current} attempts: ${cfg.url} (code=${evt.code})`
+          : `WebSocket closed: ${cfg.url} (code=${evt.code}, clean=${evt.wasClean})`,
+        data: {
+          url: cfg.url,
+          code: evt.code,
+          reason: evt.reason,
+          wasClean: evt.wasClean,
+          attempts: attemptsRef.current,
+          atCap,
+        },
+      })
       callbacksRef.current.onClose?.({
         code: evt.code,
         reason: evt.reason,
@@ -233,8 +256,6 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
       // Decide whether to reconnect. We always surface the failure
       // callback (and the closed status) when the attempt cap has
       // been reached; otherwise we schedule another attempt.
-      const atCap =
-        cfg.maxReconnectAttempts > 0 && attemptsRef.current >= cfg.maxReconnectAttempts
       if (!shouldReconnectRef.current || atCap) {
         if (atCap) callbacksRef.current.onReconnectFailed?.(attemptsRef.current)
         setStatus('closed')
@@ -246,6 +267,12 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 
     ws.onerror = () => {
       const msg = 'WebSocket connection error'
+      addBreadcrumb({
+        type: 'ws',
+        level: 'error',
+        message: `WebSocket error: ${cfg.url}`,
+        data: { url: cfg.url, attempts: attemptsRef.current },
+      })
       setLastError(msg)
       callbacksRef.current.onError?.(msg)
       // Don't change status here; onclose will follow with the

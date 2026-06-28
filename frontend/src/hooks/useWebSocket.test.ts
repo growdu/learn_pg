@@ -267,3 +267,55 @@ describe('backoffDelay', () => {
     }
   })
 })
+
+
+
+// ─────────────────────────────────────────────────────────────────
+// Breadcrumbs — useWebSocket should record lifecycle events so that
+// an error report submitted later carries useful trail context.
+// ─────────────────────────────────────────────────────────────────
+import { getBreadcrumbs, __resetErrorReporterForTests } from '../lib/errorReporter'
+
+describe('breadcrumbs', () => {
+  beforeEach(() => {
+    __resetErrorReporterForTests()
+    MockWebSocket.reset()
+  })
+
+  it('records an info breadcrumb when the socket opens', () => {
+    const { result } = renderHook(() => useWebSocket({ baseBackoffMs: 5, maxBackoffMs: 5 }))
+    act(() => result.current.connect())
+    expect(MockWebSocket.instances).toHaveLength(1)
+    act(() => MockWebSocket.instances[0]._open())
+    const msgs = getBreadcrumbs().map((b) => b.message)
+    expect(msgs.some((m) => m.startsWith('WebSocket open:'))).toBe(true)
+  })
+
+  it('records an info breadcrumb on a clean close', () => {
+    const { result } = renderHook(() => useWebSocket({ baseBackoffMs: 5, maxBackoffMs: 5 }))
+    act(() => result.current.connect())
+    act(() => MockWebSocket.instances[0]._open())
+    act(() => MockWebSocket.instances[0]._close())
+    const msgs = getBreadcrumbs().map((b) => b.message)
+    expect(msgs.some((m) => m.startsWith('WebSocket closed:'))).toBe(true)
+  })
+
+  it('records an error breadcrumb when reconnect cap is reached', async () => {
+    vi.useFakeTimers()
+    const { result } = renderHook(() =>
+      useWebSocket({ maxReconnectAttempts: 1, baseBackoffMs: 1, maxBackoffMs: 2 }),
+    )
+    act(() => result.current.connect())
+    const sock1 = MockWebSocket.instances[0]
+    act(() => sock1._close()) // attempts=0, NOT at cap, will reconnect
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5)
+    })
+    // Second instance should now exist; close it to hit cap
+    const sock2 = MockWebSocket.instances[1]
+    expect(sock2).toBeDefined()
+    act(() => sock2._close()) // attempts=1, at cap -> closed + error breadcrumb
+    const msgs = getBreadcrumbs().map((b) => b.message)
+    expect(msgs.some((m) => m.includes('gave up'))).toBe(true)
+  })
+})

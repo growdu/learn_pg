@@ -5,6 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, createApiClient, type RetryInfo } from './api'
+import { addBreadcrumb, getBreadcrumbs, __resetErrorReporterForTests } from './errorReporter'
 
 interface MockResponseInit {
   status?: number
@@ -203,5 +204,48 @@ describe('createApiClient', () => {
     expect(headers['X-Custom']).toBe('yes')
     expect(headers['Accept']).toBe('text/plain')
     expect(headers['X-Request-Id']).toBeTruthy()
+  })
+})
+
+
+describe('breadcrumbs', () => {
+  beforeEach(() => {
+    __resetErrorReporterForTests()
+  })
+
+  it('records fetch attempts and final network failures', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('ECONNREFUSED'))
+    const c = createApiClient({
+      baseUrl: 'http://127.0.0.1:1',
+      maxRetries: 1,
+      defaultTimeoutMs: 100,
+      baseBackoffMs: 1,
+      maxBackoffMs: 5,
+    })
+    addBreadcrumb({ type: 'log', message: 'before' })
+    await expect(c.get('/x')).rejects.toThrow()
+    const trail = getBreadcrumbs().map((b) => b.message)
+    expect(trail).toContain('before')
+    // First attempt
+    expect(trail.some((m) => m.startsWith('GET /x (attempt 1)'))).toBe(true)
+    // Retry attempt
+    expect(trail.some((m) => m.startsWith('GET /x (attempt 2)'))).toBe(true)
+    // Final network error breadcrumb
+    expect(trail.some((m) => m.includes('network error'))).toBe(true)
+  })
+
+  it('records http-error breadcrumb on final 500 after retries', async () => {
+    for (let i = 0; i < 4; i++) {
+      fetchMock.mockResolvedValueOnce(mockResponse({ status: 500, body: '{}' }))
+    }
+    const c = createApiClient({
+      baseUrl: 'http://x',
+      maxRetries: 3,
+      baseBackoffMs: 1,
+      maxBackoffMs: 5,
+    })
+    await expect(c.get('/boom')).rejects.toBeInstanceOf(ApiError)
+    const trail = getBreadcrumbs().map((b) => b.message)
+    expect(trail.some((m) => m.includes('500'))).toBe(true)
   })
 })

@@ -19,6 +19,8 @@
 // This file deliberately has zero React dependencies so it can be
 // unit-tested with plain vitest.
 
+import { addBreadcrumb } from './errorReporter'
+
 /** Configuration for the API client. Most apps only need baseUrl. */
 export interface ApiClientOptions {
   /** Base URL, e.g. "http://localhost:3010". No trailing slash. */
@@ -163,6 +165,11 @@ export function createApiClient(opts: ApiClientOptions) {
         'X-Request-Id': requestId,
         ...options.headers,
       }
+      addBreadcrumb({
+        type: 'fetch',
+        message: `${method} ${path} (attempt ${attempt + 1})`,
+        data: { requestId, attempt: attempt + 1, method, url },
+      })
       let body: BodyInit | undefined
       if (options.body !== undefined) {
         headers['Content-Type'] = headers['Content-Type'] ?? 'application/json'
@@ -195,7 +202,15 @@ export function createApiClient(opts: ApiClientOptions) {
         })
         lastError = err
         const isRetryable = retryEnabled && attempt < maxRetries && err.isRetryable
-        if (!isRetryable) throw err
+        if (!isRetryable) {
+          addBreadcrumb({
+            type: 'fetch',
+            level: 'error',
+            message: `${method} ${path} failed: ${status} ${message}`,
+            data: { requestId, status, url },
+          })
+          throw err
+        }
       } else {
         // network / abort
         const err = new ApiError({
@@ -209,7 +224,17 @@ export function createApiClient(opts: ApiClientOptions) {
         lastError = err
         const isRetryable =
           retryEnabled && attempt < maxRetries && !(options.signal?.aborted === true)
-        if (!isRetryable) throw err
+        if (!isRetryable) {
+          addBreadcrumb({
+            type: 'fetch',
+            level: options.signal?.aborted ? 'info' : 'error',
+            message: options.signal?.aborted
+              ? `${method} ${path} aborted`
+              : `${method} ${path} network error: ${err.message}`,
+            data: { requestId, url, aborted: options.signal?.aborted === true },
+          })
+          throw err
+        }
       }
 
       // We get here only when we'll retry.

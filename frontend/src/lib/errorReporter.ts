@@ -36,6 +36,13 @@ export interface ErrorReport {
  *  the report with what the user was doing right before the crash. */
 export interface Breadcrumb {
   type: 'log' | 'click' | 'nav' | 'ws' | 'fetch'
+  /**
+   * Severity hint. 'info' is the default for routine lifecycle events;
+   * 'warn' is for transient issues that recovered (e.g. a retry);
+   * 'error' is for events that directly caused or preceded a
+   * reported error.
+   */
+  level?: 'info' | 'warn' | 'error'
   message: string
   timestamp: number
   data?: Record<string, unknown>
@@ -65,6 +72,10 @@ let activeConfig: Required<ErrorReporterConfig> = {
 }
 
 /** Append a breadcrumb. Safe to call from anywhere — never throws. */
+export function getBreadcrumbs(): readonly Breadcrumb[] {
+  return breadcrumbs
+}
+
 export function addBreadcrumb(breadcrumb: Omit<Breadcrumb, 'timestamp'>): void {
   if (!activeConfig.enabled) return
   const entry: Breadcrumb = { ...breadcrumb, timestamp: Date.now() }
