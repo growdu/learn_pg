@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"pg-visualizer-backend/internal/api"
+	"pg-visualizer-backend/internal/auditlog"
 	"pg-visualizer-backend/internal/config"
 	"pg-visualizer-backend/internal/connection"
 	"pg-visualizer-backend/internal/middleware"
@@ -80,6 +81,23 @@ func main() {
 		Release:     os.Getenv("APP_RELEASE"),
 	})
 	defer rep.Shutdown()
+
+	// Audit log: a dedicated slog channel for sensitive operations
+	// (PG connect, execute, provision, workspace edits, discovery
+	// imports). Path is "-" to write to stderr alongside the regular
+	// log; set LEARN_PG_AUDIT_PATH to point at a file or a
+	// fifo consumed by a log shipper.
+	auditPath := os.Getenv("LEARN_PG_AUDIT_PATH")
+	if auditPath == "" {
+		auditPath = "-"
+	}
+	auditLogger, err := auditlog.New(auditPath)
+	if err != nil {
+		slog.Error("audit logger init failed; continuing without audit", "err", err.Error())
+	} else {
+		handler.SetAuditLog(auditLogger)
+		defer auditLogger.Close()
+	}
 
 	// Per-IP token-bucket rate limiter. Health/metrics/ws/version are exempt.
 	rateLimiter := ratelimit.New(ratelimit.Options{

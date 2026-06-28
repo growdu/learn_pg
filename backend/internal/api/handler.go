@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"pg-visualizer-backend/internal/api/openapi"
+	"pg-visualizer-backend/internal/auditlog"
 	"pg-visualizer-backend/internal/connection"
 	"pg-visualizer-backend/internal/config"
 	"pg-visualizer-backend/internal/middleware"
@@ -75,7 +76,14 @@ func defaultProvisionTaskFilePath() string {
 }
 
 // SetConnMgr sets the connection manager
-func (h *Handler) SetConnMgr(mgr *connection.Manager) {
+// SetAuditLog installs the audit logger. The handler keeps no
+	// reference after the call returns so callers are free to swap
+	// loggers between tests.
+	func (h *Handler) SetAuditLog(l *auditlog.Logger) {
+		auditlog.SetDefault(l)
+	}
+
+	func (h *Handler) SetConnMgr(mgr *connection.Manager) {
 	h.connMgr = mgr
 }
 
@@ -295,6 +303,10 @@ func (h *Handler) ServeConnect(w http.ResponseWriter, r *http.Request) {
 
 	client := &pg.Client{}
 	if err := client.Connect(hostVal, portVal, userVal, passwordVal, dbVal); err != nil {
+		auditlog.Log(r.Context(), auditlog.ActionConnect, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "failure", map[string]any{
+			"host": hostVal, "port": portVal, "user": userVal, "database": dbVal,
+			"reason": "connect_failed",
+		})
 		h.writeError(w, r, http.StatusBadGateway, err.Error())
 		return
 	}
@@ -311,6 +323,9 @@ func (h *Handler) ServeConnect(w http.ResponseWriter, r *http.Request) {
 	version, _ := client.GetVersion()
 	dataDir, _ := client.GetPGDataDir()
 
+	auditlog.Log(r.Context(), auditlog.ActionConnect, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "success", map[string]any{
+		"host": hostVal, "port": portVal, "user": userVal, "database": dbVal, "version": version,
+	})
 	slog.Info("PG connected", "host", hostVal, "port", portVal, "db", dbVal, "version", version)
 	writeJSON(w, r, http.StatusOK, connectResponse{
 		Success: true,
@@ -451,9 +466,18 @@ func (h *Handler) ServeExecute(w http.ResponseWriter, r *http.Request) {
 
 	result, err := client.Execute(req.SQL)
 	if err != nil {
+		auditlog.Log(r.Context(), auditlog.ActionExecute, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "failure", map[string]any{
+			"sql_truncated": truncate(req.SQL, 200),
+			"reason":        "execute_failed",
+		})
 		h.writeError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	auditlog.Log(r.Context(), auditlog.ActionExecute, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "success", map[string]any{
+		"sql_truncated": truncate(req.SQL, 200),
+		"row_count":     len(result.Rows),
+	})
 
 	writeJSON(w, r, http.StatusOK, executeResponse{
 		Success: result.Error == "",
@@ -483,9 +507,15 @@ func (h *Handler) ServeWorkspaceProjects(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		if err := h.workspace.upsert(req.Project); err != nil {
+			auditlog.Log(r.Context(), auditlog.ActionWorkspaceCreate, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "failure", map[string]any{
+				"project_id": req.Project.ID, "reason": "upsert_failed",
+			})
 			h.writeError(w, r, http.StatusBadRequest, err.Error())
 			return
 		}
+		auditlog.Log(r.Context(), auditlog.ActionWorkspaceCreate, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "success", map[string]any{
+			"project_id": req.Project.ID, "project_name": req.Project.Name,
+		})
 		writeJSON(w, r, http.StatusOK, map[string]any{"success": true})
 		return
 	case http.MethodPut:
@@ -498,9 +528,15 @@ func (h *Handler) ServeWorkspaceProjects(w http.ResponseWriter, r *http.Request)
 			req.Projects = []workspaceProject{}
 		}
 		if err := h.workspace.writeAll(req.Projects); err != nil {
+			auditlog.Log(r.Context(), auditlog.ActionWorkspaceUpdate, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "failure", map[string]any{
+				"count": len(req.Projects), "reason": "write_failed",
+			})
 			h.writeError(w, r, http.StatusInternalServerError, "failed to save workspace: "+err.Error())
 			return
 		}
+		auditlog.Log(r.Context(), auditlog.ActionWorkspaceUpdate, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "success", map[string]any{
+			"count": len(req.Projects),
+		})
 		writeJSON(w, r, http.StatusOK, map[string]any{"success": true, "count": len(req.Projects)})
 		return
 	default:
@@ -522,9 +558,15 @@ func (h *Handler) ServeWorkspaceProjectByID(w http.ResponseWriter, r *http.Reque
 
 	if r.Method == http.MethodDelete {
 		if err := h.workspace.deleteByID(id); err != nil {
+			auditlog.Log(r.Context(), auditlog.ActionWorkspaceDelete, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "failure", map[string]any{
+				"project_id": id, "reason": "delete_failed",
+			})
 			h.writeError(w, r, http.StatusInternalServerError, "failed to delete project: "+err.Error())
 			return
 		}
+		auditlog.Log(r.Context(), auditlog.ActionWorkspaceDelete, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "success", map[string]any{
+			"project_id": id,
+		})
 		writeJSON(w, r, http.StatusOK, map[string]any{"success": true})
 		return
 	}
@@ -536,9 +578,15 @@ func (h *Handler) ServeWorkspaceProjectByID(w http.ResponseWriter, r *http.Reque
 	}
 	req.Project.ID = id
 	if err := h.workspace.upsert(req.Project); err != nil {
+		auditlog.Log(r.Context(), auditlog.ActionWorkspaceUpdate, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "failure", map[string]any{
+			"project_id": id, "reason": "upsert_failed",
+		})
 		h.writeError(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
+	auditlog.Log(r.Context(), auditlog.ActionWorkspaceUpdate, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "success", map[string]any{
+		"project_id": id,
+	})
 	writeJSON(w, r, http.StatusOK, map[string]any{"success": true})
 }
 
@@ -1619,4 +1667,19 @@ func (h *Handler) inspectNodeClient(node workspaceNode, client *pg.Client) clust
 	}
 
 	return status
+}
+
+
+// truncate returns s shortened to at most n runes, with a trailing
+// ellipsis when shortened. Used by the audit log so a 1MB INSERT
+// doesn't bloat every audit record.
+func truncate(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "..."
 }

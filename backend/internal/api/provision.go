@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"pg-visualizer-backend/internal/auditlog"
 	"pg-visualizer-backend/internal/provision"
 )
 
@@ -120,6 +121,9 @@ func (h *Handler) ServeProvisionSingle(w http.ResponseWriter, r *http.Request) {
 			FinishedAt: time.Now().UnixMilli(),
 			Error:      err.Error(),
 		})
+		auditlog.Log(r.Context(), auditlog.ActionProvisionStart, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "failure", map[string]any{
+			"task_id": taskID, "project_id": req.ProjectID, "provider": providerType, "reason": "start_failed",
+		})
 		h.writeError(w, r, 500, "provision failed: "+err.Error())
 		return
 	}
@@ -204,6 +208,10 @@ func (h *Handler) ServeProvisionSingle(w http.ResponseWriter, r *http.Request) {
 		FinishedAt: time.Now().UnixMilli(),
 	})
 
+	auditlog.Log(r.Context(), auditlog.ActionProvisionStart, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "success", map[string]any{
+		"task_id": taskID, "project_id": req.ProjectID, "provider": providerType,
+		"node_id": cluster.Nodes[0].ID, "host": info.Host, "port": info.Port,
+	})
 	writeJSON(w, r, 200, provisionResponse{
 		Success:             true,
 		ProjectID:           req.ProjectID,
@@ -477,6 +485,9 @@ func (h *Handler) serveProvisionReplica(w http.ResponseWriter, r *http.Request, 
 			FinishedAt: time.Now().UnixMilli(),
 			Error:      err.Error(),
 		})
+		auditlog.Log(r.Context(), auditlog.ActionProvisionStart, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "failure", map[string]any{
+			"task_id": taskID, "project_id": req.ProjectID, "type": replType, "reason": "upsert_failed",
+		})
 		h.writeError(w, r, 400, err.Error())
 		return
 	}
@@ -510,6 +521,10 @@ func (h *Handler) serveProvisionReplica(w http.ResponseWriter, r *http.Request, 
 		FinishedAt: time.Now().UnixMilli(),
 	})
 
+	auditlog.Log(r.Context(), auditlog.ActionProvisionStart, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "success", map[string]any{
+		"task_id": taskID, "project_id": req.ProjectID, "type": replType,
+		"primary_node_id": cluster.Nodes[0].ID, "replica_node_id": cluster.Nodes[1].ID,
+	})
 	writeJSON(w, r, 200, provisionResponse{
 		Success:             true,
 		ProjectID:           req.ProjectID,

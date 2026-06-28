@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"pg-visualizer-backend/internal/auditlog"
 	"time"
 )
 
@@ -173,6 +175,10 @@ func (h *Handler) ServeDiscoveryHostImport(w http.ResponseWriter, r *http.Reques
 	if req.AutoConnect && h.tryConnectNode(node) == nil {
 		connected = true
 	}
+	auditlog.Log(r.Context(), auditlog.ActionDiscoveryImport, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "success", map[string]any{
+		"node_id": node.ID, "project_id": req.ProjectID, "host": req.Instance.Host, "port": req.Instance.Port,
+		"connected": connected,
+	})
 	writeJSON(w, r, 200, map[string]any{"success": true, "nodeId": node.ID, "connected": connected})
 }
 
@@ -221,6 +227,9 @@ func (h *Handler) ServeDiscoveryDSNImport(w http.ResponseWriter, r *http.Request
 	}
 	host, port, user, pass, db, err := parseDSN(req.DSN)
 	if err != nil {
+		auditlog.Log(r.Context(), auditlog.ActionDiscoveryImport, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "failure", map[string]any{
+			"reason": "dsn_parse_failed",
+		})
 		h.writeError(w, r, 400, err.Error())
 		return
 	}
@@ -245,5 +254,9 @@ func (h *Handler) ServeDiscoveryDSNImport(w http.ResponseWriter, r *http.Request
 	if req.AutoConnect && h.tryConnectNode(node) == nil {
 		connected = true
 	}
+	auditlog.Log(r.Context(), auditlog.ActionDiscoveryImport, auditlog.ActorFromRequest(r), r.Method, r.URL.Path, "success", map[string]any{
+		"node_id": node.ID, "project_id": req.ProjectID, "host": host, "port": port, "database": db,
+		"connected": connected,
+	})
 	writeJSON(w, r, 200, map[string]any{"success": true, "nodeId": node.ID, "connected": connected})
 }
