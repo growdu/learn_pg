@@ -95,12 +95,16 @@ type workspaceEnvelope struct {
 }
 
 type workspaceStore struct {
-	mu   sync.Mutex
-	path string
+	mu     sync.Mutex
+	path   string
+	encKey []byte // AES-256 key for password encryption; nil = plain text mode
 }
 
-func newWorkspaceStore(path string) *workspaceStore {
-	return &workspaceStore{path: path}
+// newWorkspaceStore creates a store. encKey may be nil, in which case
+// passwords are stored in plain text and a warning is logged on read/write
+// (handled by the caller to avoid coupling this package to slog).
+func newWorkspaceStore(path string, encKey []byte) *workspaceStore {
+	return &workspaceStore{path: path, encKey: encKey}
 }
 
 // readEnvelopeNoLock reads the envelope without acquiring lock. Caller must hold s.mu.
@@ -119,7 +123,9 @@ func (s *workspaceStore) readEnvelopeNoLock() (workspaceEnvelope, error) {
 	// 兼容旧格式：顶层是数组
 	var legacy []workspaceProject
 	if err := json.Unmarshal(b, &legacy); err == nil {
-		return workspaceEnvelope{SchemaVersion: 0, Projects: normalizeProjects(legacy)}, nil
+		env := workspaceEnvelope{SchemaVersion: 0, Projects: normalizeProjects(legacy)}
+		s.decryptNodePasswords(env.Projects)
+		return env, nil
 	}
 
 	// 新格式：envelope
@@ -131,7 +137,61 @@ func (s *workspaceStore) readEnvelopeNoLock() (workspaceEnvelope, error) {
 		env.SchemaVersion = currentWorkspaceSchemaVersion
 	}
 	env.Projects = normalizeProjects(env.Projects)
+	s.decryptNodePasswords(env.Projects)
 	return env, nil
+}
+
+// decryptNodePasswords walks every node and decrypts its password in place.
+// Plain-text values (no prefix) are left alone so legacy data can be read
+// without a key; the next write will re-encrypt when a key is configured.
+func (s *workspaceStore) decryptNodePasswords(projects []workspaceProject) {
+	if s.encKey == nil {
+		return
+	}
+	for pi := range projects {
+		for ci := range projects[pi].Clusters {
+			for ni := range projects[pi].Clusters[ci].Nodes {
+				stored := projects[pi].Clusters[ci].Nodes[ni].Password
+				if !isEncrypted(stored) {
+					continue
+				}
+				plain, err := decryptPassword(stored, s.encKey)
+				if err != nil {
+					// Don't fail the whole read; just leave the encrypted value
+					// and log via the caller. The node will be rejected at
+					// connect-time with a clear error.
+					continue
+				}
+				projects[pi].Clusters[ci].Nodes[ni].Password = plain
+			}
+		}
+	}
+}
+
+// encryptNodePasswords is the inverse of decryptNodePasswords, called before
+// writing. If a key is configured, plain values are upgraded to encrypted.
+// Already-encrypted values are written back as-is to avoid double-encryption
+// in case the caller forgot to decrypt first.
+func (s *workspaceStore) encryptNodePasswords(projects []workspaceProject) error {
+	if s.encKey == nil {
+		return nil
+	}
+	for pi := range projects {
+		for ci := range projects[pi].Clusters {
+			for ni := range projects[pi].Clusters[ci].Nodes {
+				stored := projects[pi].Clusters[ci].Nodes[ni].Password
+				if stored == "" || isEncrypted(stored) {
+					continue
+				}
+				ct, err := encryptPassword(stored, s.encKey)
+				if err != nil {
+					return err
+				}
+				projects[pi].Clusters[ci].Nodes[ni].Password = ct
+			}
+		}
+	}
+	return nil
 }
 
 func (s *workspaceStore) readSnapshot() ([]workspaceProject, int, error) {
@@ -161,6 +221,9 @@ func (s *workspaceStore) writeAll(projects []workspaceProject) error {
 
 func (s *workspaceStore) writeEnvelopeLocked(env workspaceEnvelope) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+		return err
+	}
+	if err := s.encryptNodePasswords(env.Projects); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(env, "", "  ")

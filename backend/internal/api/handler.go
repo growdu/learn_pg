@@ -36,18 +36,26 @@ type Handler struct {
 	taskPath         string
 }
 
-// NewHandler creates a new API handler
+// NewHandler creates a new API handler. If cfg.WorkspaceEncryptionKey is
+// set but malformed, we log a warning and fall back to plain text mode
+// (the store reads and writes without encryption). Fail-closed would be
+// safer but would block dev environments with a typo.
 func NewHandler(cfg *config.Config, hub *ws.Hub, connMgr *connection.Manager) *Handler {
-	h := &Handler{
+	key, err := ResolveEncryptionKey(cfg.WorkspaceEncryptionKey)
+	if err != nil {
+		slog.Warn("workspace encryption key is malformed; falling back to plain text",
+			slog.String("env", "WORKSPACE_ENCRYPTION_KEY"),
+			slog.String("err", err.Error()))
+	}
+h := &Handler{
 		config:           cfg,
 		hub:              hub,
 		connMgr:          connMgr,
-		workspace:        newWorkspaceStore(defaultWorkspaceFilePath()),
+		workspace:        newWorkspaceStore(defaultWorkspaceFilePath(), key),
 		provisionService: provision.NewService(),
 		tasks:            make(map[string]provisionTask),
 		taskPath:         defaultProvisionTaskFilePath(),
 	}
-	// Register providers
 	h.provisionService.RegisterProvider(&provision.DockerProvider{})
 	h.provisionService.RegisterProvider(&provision.LocalProvider{})
 	h.provisionService.RegisterReplicationProvider(provision.NewDockerReplicationProvider("data"))

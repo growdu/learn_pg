@@ -170,3 +170,67 @@ func TestWorkspaceHostsCRUD(t *testing.T) {
 		}
 	})
 }
+
+// TestWorkspaceEncryptionRoundTrip verifies that node passwords written with
+// an encryption key are persisted encrypted on disk and restored to plain
+// text on read.
+func TestWorkspaceEncryptionRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "ws.json")
+	if err := os.WriteFile(path, []byte(`{"projects":[],"schemaVersion":2}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	key := []byte("0123456789abcdef0123456789abcdef") // 32 bytes
+	store := newWorkspaceStore(path, key)
+
+	plain := "sup3r-s3cret-p@ss"
+	project := workspaceProject{
+		ID:   "p1",
+		Name: "Test",
+		Clusters: []workspaceCluster{{
+			ID:   "c1",
+			Name: "Cluster-1",
+			Nodes: []workspaceNode{{
+				ID: "n1", Host: "10.0.0.1", Port: 5432, User: "postgres",
+				Password: plain,
+			}},
+		}},
+	}
+	if err := store.upsert(project); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if containsString(string(raw), plain) {
+		t.Fatalf("plain password leaked to disk: %s", raw)
+	}
+
+	store2 := newWorkspaceStore(path, key)
+	env, err := store2.readEnvelopeNoLock()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	got := env.Projects[0].Clusters[0].Nodes[0].Password
+	if got != plain {
+		t.Fatalf("decrypt mismatch: got %q want %q", got, plain)
+	}
+
+	badKey := []byte("fedcba9876543210fedcba9876543210")
+	store3 := newWorkspaceStore(path, badKey)
+	env2, _ := store3.readEnvelopeNoLock()
+	if env2.Projects[0].Clusters[0].Nodes[0].Password == plain {
+		t.Fatalf("read with wrong key should not return the original plain password")
+	}
+}
+
+func containsString(haystack, needle string) bool {
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
+}

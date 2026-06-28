@@ -20,25 +20,31 @@ type Config struct {
 
 	// Collector
 	CollectorWSURL string
-	EnableEBPF    bool
+	EnableEBPF     bool
 
 	// Logging
 	LogLevel string
+
+	// WorkspaceSecrets holds the encryption key for node passwords stored
+	// in the workspace envelope. When empty, passwords are written in
+	// plain text and a startup warning is logged.
+	WorkspaceEncryptionKey string
 }
 
 // Load reads configuration from environment variables
 func Load() *Config {
 	return &Config{
-		PGHost:          getEnv("PG_HOST", "localhost"),
-		PGPort:          getEnvInt("PG_PORT", 5432),
-		PGUser:          getEnv("PG_USER", "postgres"),
-		PGPassword:      getEnv("PG_PASSWORD", "postgres"),
-		PGDatabase:      getEnv("PG_DATABASE", "postgres"),
-		PGDataDir:       getEnv("PG_DATA_DIR", "/dev_tool/docker_root/volumes/learn_pg_pg_data/_data/data"),
-		APIPort:         getEnvInt("API_PORT", 3000),
-		CollectorWSURL:  getEnv("COLLECTOR_WS_URL", "ws://localhost:8090"),
-		EnableEBPF:      getEnvBool("ENABLE_EBPF", true),
-		LogLevel:        getEnv("LOG_LEVEL", "info"),
+		PGHost:                 getEnv("PG_HOST", "localhost"),
+		PGPort:                 getEnvInt("PG_PORT", 5432),
+		PGUser:                 getEnv("PG_USER", "postgres"),
+		PGPassword:             getEnv("PG_PASSWORD", "postgres"),
+		PGDatabase:             getEnv("PG_DATABASE", "postgres"),
+		PGDataDir:              getEnv("PG_DATA_DIR", "/dev_tool/docker_root/volumes/learn_pg_pg_data/_data/data"),
+		APIPort:                getEnvInt("API_PORT", 3000),
+		CollectorWSURL:         getEnv("COLLECTOR_WS_URL", "ws://localhost:8090"),
+		EnableEBPF:             getEnvBool("ENABLE_EBPF", true),
+		LogLevel:               getEnv("LOG_LEVEL", "info"),
+		WorkspaceEncryptionKey: getEnv("WORKSPACE_ENCRYPTION_KEY", ""),
 	}
 }
 
