@@ -24,23 +24,23 @@ const transactionStateMap: Record<string, TransactionState['state']> = {
   abort: 'abort',
 }
 
-function asWalEvent(event: ProbeEvent): WALInsertEvent | null {
+export function asWalEvent(event: ProbeEvent): WALInsertEvent | null {
   return event.type === 'wal_insert' ? (event as WALInsertEvent) : null
 }
 
-function asBufferEvent(event: ProbeEvent): BufferPinEvent | null {
+export function asBufferEvent(event: ProbeEvent): BufferPinEvent | null {
   return event.type === 'buffer_pin' ? (event as BufferPinEvent) : null
 }
 
-function asXactEvent(event: ProbeEvent): XactEvent | null {
+export function asXactEvent(event: ProbeEvent): XactEvent | null {
   return event.type === 'xact_state' ? (event as XactEvent) : null
 }
 
-function asHeartbeatEvent(event: ProbeEvent): HeartbeatEvent | null {
+export function asHeartbeatEvent(event: ProbeEvent): HeartbeatEvent | null {
   return event.type === 'heartbeat' ? (event as HeartbeatEvent) : null
 }
 
-function buildBufferCells(events: ProbeEvent[]): BufferCell[] {
+export function buildBufferCells(events: ProbeEvent[]): BufferCell[] {
   const aggregate = new Map<number, BufferCell>()
 
   for (const event of events) {
@@ -61,7 +61,7 @@ function buildBufferCells(events: ProbeEvent[]): BufferCell[] {
   return Array.from(aggregate.values()).sort((a, b) => a.buffer_id - b.buffer_id)
 }
 
-function buildTransactionStates(events: ProbeEvent[]): TransactionState[] {
+export function buildTransactionStates(events: ProbeEvent[]): TransactionState[] {
   return events
     .map(asXactEvent)
     .filter((event): event is XactEvent => Boolean(event))
@@ -75,7 +75,7 @@ function buildTransactionStates(events: ProbeEvent[]): TransactionState[] {
     }))
 }
 
-function buildWriteStages(events: ProbeEvent[]): PipelineStage[] | undefined {
+export function buildWriteStages(events: ProbeEvent[]): PipelineStage[] | undefined {
   const latestWal = [...events].reverse().find(asWalEvent)
   const latestBuffer = [...events].reverse().find(asBufferEvent)
   const latestXact = [...events].reverse().find(asXactEvent)
