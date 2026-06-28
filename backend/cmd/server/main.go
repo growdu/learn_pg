@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"net/http"
 	"os"
 	"os/signal"
@@ -101,7 +102,15 @@ func main() {
 	finalHandler = middleware.Recover(rep)(finalHandler)
 	finalHandler = middleware.RequestID(finalHandler)
 	finalHandler = middleware.Logger(finalHandler)
-	finalHandler = middleware.CORS(finalHandler)
+	corsCfg := middleware.DefaultCORSConfig()
+	if v := os.Getenv("CORS_ALLOWED_ORIGINS"); v != "" {
+		// Comma-separated whitelist. "*" alone is a wildcard.
+		corsCfg.AllowedOrigins = splitAndTrim(v, ",")
+	}
+	if os.Getenv("CORS_ALLOW_CREDENTIALS") == "true" {
+		corsCfg.AllowCredentials = true
+	}
+	finalHandler = middleware.CORS(corsCfg)(finalHandler)
 	finalHandler = middleware.Security(finalHandler)
 	finalHandler = rateLimiter.Middleware(finalHandler)
 	finalHandler = metrics.HTTPMiddleware(finalHandler)
@@ -151,4 +160,17 @@ func main() {
 	connMgr.Close()
 
 	slog.Info("server stopped")
+}
+
+// splitAndTrim splits s on sep, trims whitespace and drops empty parts.
+func splitAndTrim(s, sep string) []string {
+	parts := strings.Split(s, sep)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

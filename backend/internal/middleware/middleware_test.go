@@ -93,7 +93,7 @@ func TestCORSOptions(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	handler := CORS(mux)
+	handler := CORSWithDefaults(mux)
 	req := httptest.NewRequest(http.MethodOptions, "/test", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -112,7 +112,7 @@ func TestCORSAllowsMethod(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	handler := CORS(mux)
+	handler := CORSWithDefaults(mux)
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -135,5 +135,76 @@ func TestStatusWriterCapturesCode(t *testing.T) {
 
 	if rec.Code != http.StatusCreated {
 		t.Errorf("response status = %d, want 201", rec.Code)
+	}
+}
+
+
+func TestCORSWhitelistEchoesOrigin(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/x", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	h := CORS(CORSConfig{AllowedOrigins: []string{"https://app.example.com"}})(mux)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set("Origin", "https://app.example.com")
+	h.ServeHTTP(rec, req)
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://app.example.com" {
+		t.Errorf("Allow-Origin = %q, want echoed origin", got)
+	}
+	if got := rec.Header().Get("Vary"); got != "Origin" {
+		t.Errorf("Vary = %q, want Origin", got)
+	}
+}
+
+func TestCORSWhitelistRejectsUnknownOrigin(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/x", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	h := CORS(CORSConfig{AllowedOrigins: []string{"https://app.example.com"}})(mux)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set("Origin", "https://attacker.example.com")
+	h.ServeHTTP(rec, req)
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("Allow-Origin should be empty for unknown origin, got %q", got)
+	}
+}
+
+func TestCORSCredentialsDisablesWildcard(t *testing.T) {
+	// Browser spec: credentials + wildcard origin is forbidden, so
+	// when both are requested we must NOT echo "*" - we must echo
+	// the specific origin or nothing. The implementation here is
+	// to treat the request as a miss when wildcard is dropped, so
+	// unknown origins get no Allow-Origin header.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/x", func(w http.ResponseWriter, r *http.Request) {})
+	h := CORS(CORSConfig{AllowedOrigins: []string{"*"}, AllowCredentials: true})(mux)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set("Origin", "https://anywhere.example.com")
+	h.ServeHTTP(rec, req)
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("Allow-Origin = %q, want empty (wildcard disabled by credentials)", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Errorf("Allow-Credentials = %q, want true", got)
+	}
+
+	// But a specific origin that IS in the allowlist still works.
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req2.Header.Set("Origin", "https://app.example.com")
+	h2 := CORS(CORSConfig{
+		AllowedOrigins:    []string{"https://app.example.com"},
+		AllowCredentials: true,
+	})(mux)
+	h2.ServeHTTP(rec2, req2)
+	if got := rec2.Header().Get("Access-Control-Allow-Origin"); got != "https://app.example.com" {
+		t.Errorf("Allow-Origin with creds = %q, want specific origin", got)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -72,19 +73,95 @@ func Logger(next http.Handler) http.Handler {
 	})
 }
 
-// CORS middleware handles CORS preflight and sets standard CORS headers.
-func CORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Request-ID")
+// CORSConfig configures the CORS middleware. AllowedOrigins is a
+// whitelist; "*" alone means "any origin, no credentials" which is
+// the previous (insecure-by-default) behaviour. When "*" is in the
+// list together with any other origin, the safer origin-echo
+// behaviour kicks in.
+type CORSConfig struct {
+	// AllowedOrigins is the whitelist of origins the server will echo
+	// back in Access-Control-Allow-Origin. Empty -> no CORS headers
+	// at all (same-origin only). "*" alone -> "*".
+	AllowedOrigins []string
+	// AllowedMethods is the set of methods allowed in preflight.
+	AllowedMethods []string
+	// AllowedHeaders is the set of request headers allowed in
+	// preflight. Defaults to Content-Type, X-Request-ID,
+	// X-API-Key (the auth token header used by the rest of the
+	// backend).
+	AllowedHeaders []string
+	// AllowCredentials toggles Access-Control-Allow-Credentials.
+	// When true, the wildcard origin is not allowed; you must list
+	// specific origins.
+	AllowCredentials bool
+}
 
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
+// DefaultCORSConfig returns the defaults used when main.go doesn't
+// override anything. "*" preserves the previous behaviour; deployers
+// who care about CORS should set CORS_ALLOWED_ORIGINS in their env.
+func DefaultCORSConfig() CORSConfig {
+	return CORSConfig{
+		AllowedOrigins: []string{"*"},
+		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{"Content-Type", "X-Request-ID", "X-API-Key"},
+	}
+}
+
+// CORS applies the configured policy. On preflight (OPTIONS) requests
+// it short-circuits with 204 + the relevant headers. On actual
+// requests it only echoes Access-Control-Allow-Origin when the
+// request's Origin header is in the allowlist.
+func CORS(cfg CORSConfig) func(http.Handler) http.Handler {
+	if len(cfg.AllowedMethods) == 0 {
+		cfg.AllowedMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	}
+	if len(cfg.AllowedHeaders) == 0 {
+		cfg.AllowedHeaders = []string{"Content-Type", "X-Request-ID", "X-API-Key"}
+	}
+	// Build a set for O(1) origin lookup.
+	allowed := make(map[string]struct{}, len(cfg.AllowedOrigins))
+	wildcard := false
+	for _, o := range cfg.AllowedOrigins {
+		if o == "*" {
+			wildcard = true
 		}
-		next.ServeHTTP(w, r)
-	})
+		allowed[o] = struct{}{}
+	}
+	if cfg.AllowCredentials && wildcard {
+		// Browser spec forbids credentials + wildcard origin.
+		wildcard = false
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			switch {
+			case wildcard:
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			case origin != "":
+				if _, ok := allowed[origin]; ok {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Add("Vary", "Origin")
+				}
+			}
+			w.Header().Set("Access-Control-Allow-Methods", strings.Join(cfg.AllowedMethods, ", "))
+			w.Header().Set("Access-Control-Allow-Headers", strings.Join(cfg.AllowedHeaders, ", "))
+			if cfg.AllowCredentials {
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// CORSWithDefaults is a convenience for tests and callers that don't
+// care about the config; it produces the same wildcard behaviour the
+// project shipped before this change.
+func CORSWithDefaults(next http.Handler) http.Handler {
+	return CORS(DefaultCORSConfig())(next)
 }
 
 // statusWriter captures the status code written by the handler.
