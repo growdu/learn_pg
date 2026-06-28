@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { usePGStore, type PGConfig } from '../../stores/pgStore'
+import { ApiError, getDefaultApiClient } from '../../lib/api'
 import '../../styles/index.css'
 
 export interface ConnectionProfile {
@@ -37,17 +38,17 @@ export default function ConnectionManager({ onConnect, onVersion }: Props) {
     setConnecting(true)
     setError('')
     try {
-      const res = await fetch('/api/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          host: profile.host,
-          port: profile.port,
-          user: profile.user,
-          database: profile.database,
-        }),
+      const api = getDefaultApiClient()
+      const data = await api.post<{
+        success: boolean
+        version?: string
+        message?: string
+      }>('/api/connect', {
+        host: profile.host,
+        port: profile.port,
+        user: profile.user,
+        database: profile.database,
       })
-      const data = await res.json()
       if (data.success) {
         const cfg: PGConfig = {
           host: profile.host,
@@ -65,7 +66,11 @@ export default function ConnectionManager({ onConnect, onVersion }: Props) {
         setError(data.message || 'Connection failed')
       }
     } catch (e) {
-      setError(`Cannot connect to ${profile.host}:${profile.port}`)
+      if (e instanceof ApiError) {
+        setError(`Backend rejected connection (HTTP ${e.status}): ${e.message}`)
+      } else {
+        setError(`Cannot connect to ${profile.host}:${profile.port}: ${(e as Error).message}`)
+      }
     }
     setConnecting(false)
   }
