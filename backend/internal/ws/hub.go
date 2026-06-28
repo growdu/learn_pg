@@ -41,6 +41,9 @@ type Hub struct {
 	broadcast  chan []byte
 	register   chan *Client
 	unregister chan *Client
+	stop       chan struct{}
+	stopOnce   sync.Once
+	done       chan struct{}
 	mu         sync.RWMutex
 }
 
@@ -51,13 +54,27 @@ func NewHub() *Hub {
 		broadcast:  make(chan []byte, 256),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
+		stop:       make(chan struct{}),
+		done:       make(chan struct{}),
 	}
 }
 
-// Run starts the Hub's main loop
+// Run starts the Hub's main loop. It returns when Stop() is called.
 func (h *Hub) Run() {
+	defer close(h.done)
 	for {
 		select {
+		case <-h.stop:
+			// Disconnect any remaining clients so their read/write
+			// goroutines can exit instead of hanging on dead conns.
+			h.mu.Lock()
+			for c := range h.clients {
+				close(c.send)
+				delete(h.clients, c)
+			}
+			h.mu.Unlock()
+			return
+
 		case client := <-h.register:
 			h.mu.Lock()
 			h.clients[client] = true
@@ -90,6 +107,13 @@ func (h *Hub) Run() {
 			h.mu.RUnlock()
 		}
 	}
+}
+
+// Stop signals Run to exit and blocks until it has. Safe to call
+// multiple times.
+func (h *Hub) Stop() {
+	h.stopOnce.Do(func() { close(h.stop) })
+	<-h.done
 }
 
 // Broadcast sends a message to all connected clients

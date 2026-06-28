@@ -95,6 +95,19 @@ func (m *Manager) Activate(nodeId string) error {
 	return nil
 }
 
+// Close shuts down every active connection in the manager. Intended
+// for graceful server shutdown so we don't leak file descriptors or
+// leave the PG server with half-closed backend sockets.
+func (m *Manager) Close() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, client := range m.conns {
+		client.Close()
+		delete(m.conns, id)
+	}
+	m.active.Store("")
+}
+
 // Deactivate closes the connection for a node but keeps the config.
 func (m *Manager) Deactivate(nodeId string) error {
 	m.mu.Lock()

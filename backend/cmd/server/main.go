@@ -139,10 +139,16 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Give active connections 10s to finish
+	// Stop the HTTP server first so no new requests come in.
 	if err := srv.Shutdown(ctx); err != nil {
 		slog.Error("server shutdown error", "error", err)
 	}
+
+	// Close downstream resources in the reverse order they were
+	// started. Each step has its own bounded timeout so a stuck
+	// dependency can't pin the process forever.
+	hub.Stop()
+	connMgr.Close()
 
 	slog.Info("server stopped")
 }
