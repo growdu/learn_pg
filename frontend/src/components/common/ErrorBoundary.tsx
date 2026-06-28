@@ -89,6 +89,15 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, State> {
       componentStack: info.componentStack ?? '',
       timestamp: new Date(),
     })
+    // Also forward to the global error reporter so the event ends up
+    // on the server even if no onError prop was passed.
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('learn_pg:boundary', {
+          detail: { error, info: { componentStack: info.componentStack } },
+        }),
+      )
+    }
   }
 
   override render(): ReactNode {

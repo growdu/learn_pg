@@ -22,12 +22,16 @@ class Boom extends Component<BoomProps> {
 }
 
 describe('ErrorBoundary', () => {
+  // Widen the spy type: vi.spyOn(...).mockImplementation returns
+  // MockInstance<any[], void>, but the declared ReturnType<typeof vi.spyOn>
+  // is MockInstance<unknown[], unknown>. `any` keeps the test types
+  // tidy without leaking mock internals into the test signatures.
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>
   let reloadStub: (() => void) | undefined
   beforeEach(() => {
     // React logs caught errors to console.error during tests. Silence
     // them so the test output stays readable.
-    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {}) as ReturnType<typeof vi.spyOn>
     // jsdom doesn't allow spying on location.reload. Replace it on
     // the window object directly; reset between tests.
     reloadStub = vi.fn()
@@ -126,7 +130,6 @@ describe('ErrorBoundary', () => {
   })
 
   it('truncates very long stack traces', () => {
-    const long = 'at frame\n'.repeat(20_000)
     const onError = vi.fn()
     render(
       <ErrorBoundary onError={onError}>
@@ -143,7 +146,7 @@ describe('ErrorBoundary', () => {
       <ErrorBoundary
         fallback={(info) => <pre data-testid="trunc">{info.stack}</pre>}
       >
-        <Boom throw={new Error('x', { cause: undefined })} />
+        <Boom throw={new Error('x')} />
       </ErrorBoundary>,
     )
     // We can't easily inject a long stack via the props API, so this

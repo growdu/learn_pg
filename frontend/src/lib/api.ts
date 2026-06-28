@@ -339,6 +339,13 @@ function defaultRequestIdFactory(): string {
 
 /** Default singleton, lazily constructed from VITE_API_BASE_URL. */
 let _defaultClient: ApiClient | null = null
+// Convenience alias used by client-side modules that don't want
+// to thread a client through props. Returns the process-wide
+// singleton created by getDefaultApiClient.
+export function getApiClient(): ApiClient {
+  return getDefaultApiClient()
+}
+
 export function getDefaultApiClient(): ApiClient {
   if (_defaultClient) return _defaultClient
   const baseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''

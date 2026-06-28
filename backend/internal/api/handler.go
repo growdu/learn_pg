@@ -1362,6 +1362,74 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	// Task list/detail
 	mux.HandleFunc("/api/tasks", h.ServeTaskList)
 	mux.HandleFunc("/api/tasks/", h.ServeTaskByID)
+
+	// Frontend telemetry: best-effort ingestion of error reports
+	// and Web Vitals samples. Always returns 202 — the frontend must
+	// never be penalised for telemetry failures.
+	mux.HandleFunc("/api/telemetry/errors", h.ServeTelemetryErrors)
+	mux.HandleFunc("/api/telemetry/vitals", h.ServeTelemetryVitals)
+}
+
+
+// ─── Frontend telemetry ──────────────────────────────────────────────────────
+
+// telemetryEnvelope is the shape the frontend posts. We keep it
+// permissive (interface{}) so a frontend bug can't fail validation
+// here.
+type telemetryEnvelope struct {
+	Reports  []json.RawMessage `json:"reports"`
+	Samples  []json.RawMessage `json:"samples"`
+}
+
+func (h *Handler) ServeTelemetryErrors(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, r, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "read body: "+err.Error())
+		return
+	}
+	var env telemetryEnvelope
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &env); err != nil {
+			h.writeError(w, r, http.StatusBadRequest, "decode: "+err.Error())
+			return
+		}
+	}
+	for _, raw := range env.Reports {
+		slog.Info("telemetry error", "report", string(raw))
+	}
+	// 202 Accepted — fire-and-forget.
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = w.Write([]byte(`{"accepted":true}`))
+}
+
+func (h *Handler) ServeTelemetryVitals(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		h.writeError(w, r, http.StatusMethodNotAllowed, "POST required")
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 256*1024))
+	if err != nil {
+		h.writeError(w, r, http.StatusBadRequest, "read body: "+err.Error())
+		return
+	}
+	var env telemetryEnvelope
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &env); err != nil {
+			h.writeError(w, r, http.StatusBadRequest, "decode: "+err.Error())
+			return
+		}
+	}
+	for _, raw := range env.Samples {
+		slog.Info("telemetry vital", "sample", string(raw))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = w.Write([]byte(`{"accepted":true}`))
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
