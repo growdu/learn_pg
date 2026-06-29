@@ -48,6 +48,11 @@ coverage/
 backend/data/workspace_projects.json
 backend/pgv-server
 
+# Backend runtime data dir (created when the backend is started from
+# the repo root instead of from backend/). Stale if it shows up — safe
+# to delete.
+data/
+
 # Go build cache
 .gocache/
 
