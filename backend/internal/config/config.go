@@ -29,6 +29,11 @@ type Config struct {
 	// in the workspace envelope. When empty, passwords are written in
 	// plain text and a startup warning is logged.
 	WorkspaceEncryptionKey string
+
+	// TelemetryStorePath is the on-disk path for client error
+	// telemetry persistence. Empty disables persistence (events are
+	// still logged to stdout and counted in memory).
+	TelemetryStorePath string
 }
 
 // Load reads configuration from environment variables
@@ -45,6 +50,7 @@ func Load() *Config {
 		EnableEBPF:             getEnvBool("ENABLE_EBPF", true),
 		LogLevel:               getEnv("LOG_LEVEL", "info"),
 		WorkspaceEncryptionKey: getEnv("WORKSPACE_ENCRYPTION_KEY", ""),
+		TelemetryStorePath:     getEnv("TELEMETRY_STORE_PATH", "./data/telemetry.json"),
 	}
 }
 

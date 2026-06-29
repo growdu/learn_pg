@@ -23,6 +23,7 @@ import (
 	"pg-visualizer-backend/internal/middleware"
 	"pg-visualizer-backend/internal/pg"
 	"pg-visualizer-backend/internal/provision"
+	"pg-visualizer-backend/internal/telemetrystore"
 	"pg-visualizer-backend/internal/ws"
 	"pg-visualizer-backend/pkg/clog"
 	"pg-visualizer-backend/pkg/wal"
@@ -38,6 +39,7 @@ type Handler struct {
 	taskMu           sync.Mutex
 	tasks            map[string]provisionTask
 	taskPath         string
+	telemetry        *telemetrystore.Store
 }
 
 // NewHandler creates a new API handler. If cfg.WorkspaceEncryptionKey is
@@ -64,6 +66,7 @@ h := &Handler{
 	h.provisionService.RegisterProvider(&provision.LocalProvider{})
 	h.provisionService.RegisterReplicationProvider(provision.NewDockerReplicationProvider("data"))
 	h.loadProvisionTasks()
+	h.telemetry = telemetrystore.New(cfg.TelemetryStorePath)
 	return h
 }
 
@@ -1367,6 +1370,7 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	// and Web Vitals samples. Always returns 202 — the frontend must
 	// never be penalised for telemetry failures.
 	mux.HandleFunc("/api/telemetry/errors", h.ServeTelemetryErrors)
+	mux.HandleFunc("/api/telemetry/errors/top", h.ServeTelemetryErrorsTop)
 	mux.HandleFunc("/api/telemetry/vitals", h.ServeTelemetryVitals)
 }
 
@@ -1379,6 +1383,22 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 type telemetryEnvelope struct {
 	Reports  []json.RawMessage `json:"reports"`
 	Samples  []json.RawMessage `json:"samples"`
+}
+
+// telemetryReport is the parsed shape of a single client error. The
+// telemetry store dedups on (message, stack, url) so the parsing
+// tolerates unknown breadcrumb fields but requires the core fields
+// below.
+type telemetryReport struct {
+	EventID     string                 `json:"eventId"`
+	Timestamp   string                 `json:"timestamp"`
+	Level       string                 `json:"level"`
+	Message     string                 `json:"message"`
+	Stack       string                 `json:"stack"`
+	URL         string                 `json:"url"`
+	UserAgent   string                 `json:"userAgent"`
+	Breadcrumbs []json.RawMessage      `json:"breadcrumbs,omitempty"`
+	Extra       map[string]any         `json:"-"`
 }
 
 func (h *Handler) ServeTelemetryErrors(w http.ResponseWriter, r *http.Request) {
@@ -1398,13 +1418,77 @@ func (h *Handler) ServeTelemetryErrors(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	newCount, dupCount := 0, 0
 	for _, raw := range env.Reports {
-		slog.Info("telemetry error", "report", string(raw))
+		var rep telemetryReport
+		if err := json.Unmarshal(raw, &rep); err != nil {
+			// One bad report should not poison the batch — log and skip.
+			slog.Warn("telemetry: skipping unparseable report", "err", err.Error())
+			continue
+		}
+		if h.telemetry != nil {
+			before := h.telemetry.Len()
+			h.telemetry.Record(telemetrystore.RecordInput{
+				EventID:   rep.EventID,
+				Level:     rep.Level,
+				Message:   rep.Message,
+				URL:       rep.URL,
+				UserAgent: rep.UserAgent,
+				Stack:     rep.Stack,
+				Timestamp: parseTimestamp(rep.Timestamp),
+			})
+			if h.telemetry.Len() > before {
+				newCount++
+			} else {
+				dupCount++
+			}
+		} else {
+			// No store configured (memory-only / disabled). Still log so
+			// the operator sees the report in stdout.
+			slog.Info("telemetry error", "report", string(raw))
+		}
 	}
 	// 202 Accepted — fire-and-forget.
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	_, _ = w.Write([]byte(`{"accepted":true}`))
+	fmt.Fprintf(w, `{"accepted":true,"new":%d,"deduped":%d}`, newCount, dupCount)
+}
+
+// ServeTelemetryErrorsTop returns the most recently seen distinct
+// errors, ordered by LastSeen desc. Query param ?limit=N (default 20,
+// max 100).
+func (h *Handler) ServeTelemetryErrorsTop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		h.writeError(w, r, http.StatusMethodNotAllowed, "GET required")
+		return
+	}
+	if h.telemetry == nil {
+		writeJSON(w, r, http.StatusOK, map[string]any{"events": []any{}, "total": 0})
+		return
+	}
+	limit := 20
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+		if limit > 100 {
+			limit = 100
+		}
+	}
+	events := h.telemetry.Top(limit)
+	writeJSON(w, r, http.StatusOK, map[string]any{
+		"events": events,
+		"total":  h.telemetry.Len(),
+	})
+}
+
+// CloseTelemetry flushes the telemetry store. Safe to call multiple
+// times. Called by main on graceful shutdown.
+func (h *Handler) CloseTelemetry() error {
+	if h.telemetry == nil {
+		return nil
+	}
+	return h.telemetry.Close()
 }
 
 func (h *Handler) ServeTelemetryVitals(w http.ResponseWriter, r *http.Request) {
@@ -1750,4 +1834,16 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "..."
+}
+
+// parseTimestamp parses RFC3339 client timestamps. Returns zero time on
+// failure so the store treats it as "now" relative to ingest.
+func parseTimestamp(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	if ts, err := time.Parse(time.RFC3339, s); err == nil {
+		return ts
+	}
+	return time.Time{}
 }

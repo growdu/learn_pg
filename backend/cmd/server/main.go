@@ -99,6 +99,14 @@ func main() {
 		defer auditLogger.Close()
 	}
 
+	// Graceful shutdown for the telemetry store — flushes the dedup
+	// map to disk so a restart doesn't lose accumulated counts.
+	defer func() {
+		if err := handler.CloseTelemetry(); err != nil {
+			slog.Warn("telemetry store close failed", "err", err.Error())
+		}
+	}()
+
 	// Per-IP token-bucket rate limiter. Health/metrics/ws/version are exempt.
 	rateLimiter := ratelimit.New(ratelimit.Options{
 		Capacity:        60,
