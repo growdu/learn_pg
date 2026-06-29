@@ -1,8 +1,11 @@
-FROM docker.m.daocloud.io/library/golang:1.21-alpine
+FROM docker.m.daocloud.io/library/golang:1.24-alpine
 
 ENV GOPROXY=https://goproxy.cn,direct
 ENV GO111MODULE=on
 ENV GOSUMDB=off
+# Allow GOTOOLCHAIN=auto so the build can pick up the go.mod toolchain
+# (go1.24.2) even if the base image is slightly behind.
+ENV GOTOOLCHAIN=auto
 
 # Install docker-cli for DockerProvider
 RUN apk add --no-cache docker-cli bash

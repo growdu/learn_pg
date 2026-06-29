@@ -1,10 +1,13 @@
 # Build stage
-FROM docker.m.daocloud.io/library/golang:1.21-alpine AS builder
+FROM docker.m.daocloud.io/library/golang:1.24-alpine AS builder
 
 # Use Chinese Go proxy
 ENV GOPROXY=https://goproxy.cn,direct
 ENV GO111MODULE=on
 ENV GOSUMDB=off
+# Allow GOTOOLCHAIN=auto so the build can pick up the go.mod toolchain
+# (go1.24.2) even if the base image is slightly behind.
+ENV GOTOOLCHAIN=auto
 
 RUN apk add --no-cache ca-certificates git
 
