@@ -209,6 +209,40 @@ jobs:
       - name: Validate dev compose
         run: docker compose -f docker-compose.dev.yml config --quiet
 
+  # End-to-end smoke: actually bring up the dev + prod compose stacks
+  # on non-default ports (via scripts/docker-compose.{,prod-}smoke.yml
+  # overrides) and curl the public surface. Catches the class of bugs
+  # that "compose config --quiet" misses — DNS races, depends_on
+  # ordering, healthcheck IPv6, missing volumes, etc. Uses the backend
+  # image built by backend-build (retagged to learn_pg-backend:latest
+  # so the prod compose picks it up).
+  compose-smoke:
+    name: Compose smoke (dev + prod)
+    runs-on: ubuntu-latest
+    needs: [backend-build]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retag backend image
+        run: docker tag learn_pg-backend:ci learn_pg-backend:latest
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - name: Build frontend dist
+        working-directory: ./frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Dev compose smoke
+        run: bash scripts/dev-smoke.sh
+      - name: Prod compose smoke
+        run: bash scripts/prod-smoke.sh
+
   # ----- Push to GHCR (only on push to main, after all tests pass) -----
 
   build-and-push:
@@ -222,6 +256,7 @@ jobs:
       - frontend-test
       - collector-test
       - compose-config
+      - compose-smoke
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
