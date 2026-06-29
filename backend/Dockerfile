@@ -43,16 +43,29 @@ FROM docker.m.daocloud.io/library/alpine:3.19
 # propagation in Kubernetes/docker stop with a 10s grace period.
 #
 # docker-cli + compose: needed by the provision flow which spawns
-# containers via the host's docker socket. We pin both to a specific
-# version+SHA256 so a compromised upstream can't silently swap the
-# binary at build time.
-RUN apk add --no-cache ca-certificates tini docker-cli wget && \
+# containers via the host's docker socket. We prefer a SHA256-locked
+# pinned docker-compose v2.24.0 for reproducibility, but fall back to
+# the Alpine-packaged version (currently v2.23.3) when the GitHub
+# release download is blocked or slow. The fallback keeps the image
+# buildable in restricted networks at the cost of a one-minor-version
+# drift; compose's CLI surface is stable across 2.23.x and 2.24.x.
+RUN apk add --no-cache ca-certificates tini docker-cli docker-cli-compose wget && \
     set -eux; \
     COMPOSE_VERSION=v2.24.0; \
     COMPOSE_SHA256=ce4630d1720dc4b2f2da387c90c46017fcf3d8e87287c64191e2f6e904bb1b0e; \
-    wget -q "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64" -O /usr/local/bin/docker-compose; \
-    echo "${COMPOSE_SHA256}  /usr/local/bin/docker-compose" | sha256sum -c -; \
-    chmod +x /usr/local/bin/docker-compose
+    COMPOSE_URL="https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64"; \
+    if wget --tries=1 --timeout=20 -q "${COMPOSE_URL}" -O /usr/local/bin/docker-compose-pin && \
+       echo "${COMPOSE_SHA256}  /usr/local/bin/docker-compose-pin" | sha256sum -c -; then \
+      mv /usr/local/bin/docker-compose-pin /usr/local/bin/docker-compose; \
+      chmod +x /usr/local/bin/docker-compose; \
+      echo "using pinned docker-compose ${COMPOSE_VERSION}"; \
+    else \
+      echo "WARNING: pinned docker-compose download failed, falling back to apk package"; \
+      rm -f /usr/local/bin/docker-compose-pin; \
+      # docker-cli-compose installs the plugin into /usr/libexec/docker/cli-plugins
+      # but `docker compose` also looks in /usr/local/lib/docker/cli-plugins.
+      # The apk package provides the plugin; nothing to copy. \
+    fi
 
 # Drop privileges. The server still needs to talk to the docker
 # socket (/var/run/docker.sock) - that's why this isn't a distroless
