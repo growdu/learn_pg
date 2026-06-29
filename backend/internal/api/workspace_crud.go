@@ -485,7 +485,7 @@ func (h *Handler) ServeNodeCreate(w http.ResponseWriter, r *http.Request) {
 
 // ─── ServeNodeByID ─────────────────────────────────────────────────────────────
 
-// ServeNodeByID handles PUT, DELETE /api/nodes/{id}.
+// ServeNodeByID handles GET, PUT, DELETE /api/nodes/{id}.
 func (h *Handler) ServeNodeByID(w http.ResponseWriter, r *http.Request) {
 	nodeID := nodeIDFromPath(r.URL.Path)
 	if nodeID == "" {
@@ -522,6 +522,12 @@ outer:
 	}
 
 	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, r, http.StatusOK, map[string]interface{}{
+			"success": true,
+			"node":    MaskNode(*targetNode),
+		})
+		return
 	case http.MethodPut:
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1024*1024))
 		if err != nil {

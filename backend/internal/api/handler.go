@@ -1335,32 +1335,7 @@ func SetupRoutes(h *Handler, mux *http.ServeMux) {
 	mux.HandleFunc("/ws", h.ServeWS)
 
 	// Node activation/deactivation/register/status dispatcher
-	mux.HandleFunc("/api/nodes/", func(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-	if strings.HasSuffix(r.URL.Path, "/activate") {
-	h.ServeNodeActivate(w, r)
-	return
-	}
-	if strings.HasSuffix(r.URL.Path, "/deactivate") {
-	h.ServeNodeDeactivate(w, r)
-	return
-	}
-	if strings.HasSuffix(r.URL.Path, "/register") {
-	h.ServeNodeRegister(w, r)
-	return
-	}
-	h.writeError(w, r, http.StatusNotFound, "not found")
-	case http.MethodGet:
-	if strings.HasSuffix(r.URL.Path, "/status") {
-	h.ServeNodeStatus(w, r)
-	return
-	}
-	h.ServeNodeByID(w, r)
-	default:
-	h.writeError(w, r, http.StatusMethodNotAllowed, "POST/GET required")
-	}
-	})
+	mux.HandleFunc("/api/nodes/", h.ServeNodeRoute)
 
 	// Host CRUD
 	mux.HandleFunc("/api/hosts", h.ServeHostList)
