@@ -1,0 +1,41 @@
+# Override file for the dev compose used by scripts/dev-smoke.sh.
+#
+# Why this exists:
+#   The dev compose hard-codes host ports 5433/3010/3001 and
+#   container names like 'pgv-postgres'. On a host that already
+#   has stale dev processes (or a previous run of the smoke) those
+#   collide. This override:
+#     * remaps the host ports to a high, free range
+#     * renames containers so we don't clash with a real run
+#     * tunes the backend healthcheck to use the in-container API
+#       port and a faster retry cadence
+#
+# The collector stays in the 'linux-only' profile and is not started
+# here — eBPF requires host kernel access that doesn't exist in CI.
+#
+# Implementation note: the YAML '!override' tag is required on the
+# ports lists so the original mappings from docker-compose.dev.yml are
+# replaced, not merged (the default). Without it, the dev compose
+# would still bind 5433/3010/3001 on the host and collide with any
+# long-running processes on those ports.
+
+services:
+  postgres:
+    container_name: pgv-smoke-postgres
+    ports: !override
+      - "15433:5432"
+
+  backend:
+    container_name: pgv-smoke-backend
+    ports: !override
+      - "13010:3010"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3010/livez"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  frontend:
+    container_name: pgv-smoke-frontend
+    ports: !override
+      - "13001:80"

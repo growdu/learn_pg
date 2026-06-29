@@ -1,0 +1,36 @@
+# Override file for the prod compose used by scripts/prod-smoke.sh.
+#
+# Same purpose as scripts/docker-compose.smoke.yml but for the prod
+# stack: remap host ports so the smoke doesn't collide with a real
+# deployment or a long-running dev process, rename containers to keep
+# the namespaced 'pgv-smoke' prefix.
+#
+# Backend network alias:
+#   deploy/nginx/nginx.conf uses `proxy_pass http://pgv-backend:3000`,
+#   which resolves via the container_name (a default network alias in
+#   Compose). Because we rename the container, the smoke override
+#   re-adds the original 'pgv-backend' alias so the nginx config keeps
+#   working without modification.
+#
+# The '!override' tag is required on every ports list (see the dev
+# override for the rationale).
+
+services:
+  postgres:
+    container_name: pgv-smoke-postgres
+    ports: !override
+      - "15432:5432"
+
+  backend:
+    container_name: pgv-smoke-backend
+    networks:
+      default:
+        aliases:
+          - pgv-backend
+    ports: !override
+      - "13010:3000"
+
+  frontend:
+    container_name: pgv-smoke-frontend
+    ports: !override
+      - "13080:80"
