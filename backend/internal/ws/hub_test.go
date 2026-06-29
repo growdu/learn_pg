@@ -7,7 +7,7 @@ import (
 )
 
 func TestNewHub(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	if hub == nil {
 		t.Fatal("NewHub returned nil")
 	}
@@ -26,7 +26,7 @@ func TestNewHub(t *testing.T) {
 }
 
 func TestHubClientCount(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	count := hub.ClientCount()
 	if count != 0 {
 		t.Errorf("ClientCount() = %d, want 0", count)
@@ -34,7 +34,7 @@ func TestHubClientCount(t *testing.T) {
 }
 
 func TestHubBroadcast(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	testMsg := map[string]string{"type": "test", "message": "hello"}
 	hub.Broadcast(testMsg)
 
@@ -53,7 +53,7 @@ func TestHubBroadcast(t *testing.T) {
 }
 
 func TestHubBroadcastStruct(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	type Event struct {
 		Type      string `json:"type"`
@@ -83,7 +83,7 @@ func TestHubBroadcastStruct(t *testing.T) {
 }
 
 func TestHubBroadcastMultipleMessages(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	for i := 0; i < 5; i++ {
 		hub.Broadcast(map[string]int{"seq": i})

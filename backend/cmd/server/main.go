@@ -36,8 +36,10 @@ func main() {
 		"log_level", cfg.LogLevel,
 	)
 
-	// Create WebSocket hub
-	hub := ws.NewHub()
+	// Create WebSocket hub. Same origin allowlist as the HTTP CORS
+	// middleware (parsed below from CORS_ALLOWED_ORIGINS), so a
+	// browser that can call the API can also open the WS stream.
+	hub := ws.NewHub(parseAllowedOrigins())
 	go hub.Run()
 	slog.Info("WebSocket Hub started")
 
@@ -199,4 +201,16 @@ func splitAndTrim(s, sep string) []string {
 		}
 	}
 	return out
+}
+
+// parseAllowedOrigins returns the WS / CORS origin allowlist derived
+// from CORS_ALLOWED_ORIGINS. An empty env var yields the wildcard
+// default so a deployer who hasn't set the var (e.g. local dev) gets
+// the same behaviour as before this refactor.
+func parseAllowedOrigins() []string {
+	v := os.Getenv("CORS_ALLOWED_ORIGINS")
+	if v == "" {
+		return []string{"*"}
+	}
+	return splitAndTrim(v, ",")
 }

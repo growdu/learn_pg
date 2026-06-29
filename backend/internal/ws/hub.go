@@ -1,3 +1,11 @@
+// Package ws implements the WebSocket hub used to fan out
+// collector→frontend metric events.
+//
+// Origin policy: the upgrader's CheckOrigin is built from the same
+// allowlist the HTTP CORS middleware uses (see origin.go). The
+// defaults match the CORS defaults: nil/empty → wildcard. Deployers
+// who care should set CORS_ALLOWED_ORIGINS in their env; the value
+// is passed to NewHub by main.go.
 package ws
 
 import (
@@ -9,22 +17,6 @@ import (
 
 	"github.com/gorilla/websocket"
 )
-
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		// In production, restrict to known frontend origins.
-		// Allow all in dev (no browser CSP in dev mode).
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			return true // non-browser clients (curl, ws cli, collector)
-		}
-		// Dev: allow any origin since Vite serves on a different port than backend.
-		// TODO: in production, validate against FRONTEND_ORIGINS env var.
-		return true
-	},
-}
 
 // Client represents a single WebSocket client connection
 type Client struct {
@@ -45,10 +37,13 @@ type Hub struct {
 	stopOnce   sync.Once
 	done       chan struct{}
 	mu         sync.RWMutex
+	upgrader   websocket.Upgrader
 }
 
-// NewHub creates a new Hub instance
-func NewHub() *Hub {
+// NewHub creates a new Hub instance. The allowedOrigins slice is
+// consumed by the upgrader's CheckOrigin (see origin.go). Pass nil
+// or a slice containing "*" to accept any origin (dev / pre-CORS).
+func NewHub(allowedOrigins []string) *Hub {
 	return &Hub{
 		clients:    make(map[*Client]bool),
 		broadcast:  make(chan []byte, 256),
@@ -56,6 +51,11 @@ func NewHub() *Hub {
 		unregister: make(chan *Client),
 		stop:       make(chan struct{}),
 		done:       make(chan struct{}),
+		upgrader: websocket.Upgrader{
+			ReadBufferSize:  1024,
+			WriteBufferSize: 1024,
+			CheckOrigin:     buildCheckOrigin(allowedOrigins),
+		},
 	}
 }
 
@@ -135,7 +135,7 @@ func (h *Hub) ClientCount() int {
 
 // ServeWs handles WebSocket requests
 func ServeWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := hub.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("[WS] Upgrade error: %v", err)
 		return

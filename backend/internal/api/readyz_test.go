@@ -27,7 +27,7 @@ func newReadyzHandler(t *testing.T) *Handler {
 	}
 	return &Handler{
 		config:    &config.Config{CollectorWSURL: ""}, // skip WS probe
-		hub:       ws.NewHub(),
+		hub:       ws.NewHub(nil),
 		connMgr:   connection.NewManager(&config.Config{}),
 		workspace: store,
 	}

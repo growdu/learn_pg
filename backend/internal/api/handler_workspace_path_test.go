@@ -26,7 +26,7 @@ func TestNewHandler_UsesConfiguredWorkspaceFilePath(t *testing.T) {
 		ProvisionTaskFilePath: taskPath,
 	}
 
-	hub := ws.NewHub()
+	hub := ws.NewHub(nil)
 	go hub.Run()
 	defer hub.Stop()
 	mgr := connection.NewManager(cfg)
@@ -70,7 +70,7 @@ func TestNewHandler_CWDDoesNotInfluencePath(t *testing.T) {
 		t.Fatalf("chdir: %v", err)
 	}
 
-	hub := ws.NewHub()
+	hub := ws.NewHub(nil)
 	go hub.Run()
 	defer hub.Stop()
 	mgr := connection.NewManager(cfg)

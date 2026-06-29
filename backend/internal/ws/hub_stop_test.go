@@ -6,7 +6,7 @@ import (
 )
 
 func TestHubStopExitsRun(t *testing.T) {
-	h := NewHub()
+	h := NewHub(nil)
 	done := make(chan struct{})
 	go func() {
 		h.Run()
@@ -24,7 +24,7 @@ func TestHubStopExitsRun(t *testing.T) {
 }
 
 func TestHubStopIsIdempotent(t *testing.T) {
-	h := NewHub()
+	h := NewHub(nil)
 	go h.Run()
 	time.Sleep(10 * time.Millisecond)
 	h.Stop()
