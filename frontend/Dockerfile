@@ -1,14 +1,16 @@
 # Build stage
 FROM docker.m.daocloud.io/library/node:20-alpine AS builder
 
-# Use Chinese npm mirror
-RUN npm config set registry https://registry.npmmirror.com
+# Install pnpm via corepack. Pin the major version that matches the
+# lockfile (lockfileVersion: '9.0' is pnpm 9.x). Bumping pnpm is a
+# separate, deliberate operation.
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 WORKDIR /app
 
 # Copy package files first for better caching
-COPY package.json package-lock.json* ./
-RUN npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 # Copy source code
 COPY . .
@@ -18,7 +20,7 @@ ARG VITE_API_URL=
 ARG VITE_WS_URL=ws://localhost/ws/
 ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_WS_URL=$VITE_WS_URL
-RUN npm run build
+RUN pnpm run build
 
 # Production stage
 FROM docker.m.daocloud.io/library/nginx:alpine
