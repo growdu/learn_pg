@@ -18,8 +18,9 @@ collector/target/
 src-tauri/target/
 src-tauri/cargo-tauri/
 
-# PostgreSQL 源码（用于 eBPF probe 编译参考，勿提交）
-postgres/
+# PostgreSQL 源码（用于 eBPF probe 编译参考，勿提交）。
+# 锚定到仓库根，避免误伤 deploy/postgres/（那是部署用的 compose）。
+/postgres/
 
 # IDE
 .vscode/
@@ -50,8 +51,8 @@ backend/pgv-server
 
 # Backend runtime data dir (created when the backend is started from
 # the repo root instead of from backend/). Stale if it shows up — safe
-# to delete.
-data/
+# to delete. 锚定到仓库根，避免误伤 backend/data/。
+/data/
 
 # Go build cache
 .gocache/
