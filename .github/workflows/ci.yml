@@ -71,6 +71,90 @@ jobs:
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
             GO_VERSION=ci
 
+  backend-smoke:
+    # End-to-end smoke: start a real PG, run the backend binary, hit the
+    # public ops + workspace endpoints. Cheap (≈1 min) and gives a real
+    # signal that the build, config, and HTTP wiring still work together.
+    name: Backend smoke (start + health)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Point the backend at the service container. The default
+      # WorkspaceFilePath is ./data/workspace_projects.json, which the
+      # backend creates on first write — the smoke run is read-only so
+      # the file stays absent.
+      PG_HOST: localhost
+      PG_PORT: "5432"
+      PG_USER: postgres
+      PG_PASSWORD: postgres
+      PG_DATABASE: postgres
+      API_PORT: "3000"
+      # Skip the eBPF collector handshake in CI — there is no kernel
+      # probe here, and COLLECTOR_WS_URL defaults to ws://localhost:8090
+      # which would just retry forever.
+      ENABLE_EBPF: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache-dependency-path: backend/go.sum
+      - name: Build
+        working-directory: ./backend
+        run: go build -o /tmp/pgv-backend ./cmd/server
+      - name: Start backend
+        working-directory: ./backend
+        run: |
+          /tmp/pgv-backend > /tmp/backend.log 2>&1 &
+          BACKEND_PID=$!
+          echo "BACKEND_PID=$BACKEND_PID" >> "$GITHUB_ENV"
+          # Wait up to 30s for /livez
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/livez > /dev/null; then
+              echo "backend ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::backend did not become ready within 30s"
+          echo "--- backend log ---"
+          cat /tmp/backend.log
+          exit 1
+      - name: Smoke checks
+        run: |
+          set -e
+          echo "--- /livez ---"
+          curl -sf -w "\nstatus=%{http_code}\n" http://localhost:3000/livez
+          echo "--- /version ---"
+          curl -sf -w "\nstatus=%{http_code}\n" http://localhost:3000/version
+          echo "--- /health ---"
+          curl -sf -w "\nstatus=%{http_code}\n" http://localhost:3000/health
+          echo "--- /api/workspace/projects ---"
+          curl -sf -w "\nstatus=%{http_code}\n" http://localhost:3000/api/workspace/projects
+          echo "--- /metrics (first 5 lines) ---"
+          curl -sf http://localhost:3000/metrics | head -5
+      - name: Stop backend
+        if: always()
+        run: |
+          if [ -n "${BACKEND_PID:-}" ]; then
+            kill "$BACKEND_PID" 2>/dev/null || true
+            wait "$BACKEND_PID" 2>/dev/null || true
+          fi
+
   frontend-lint:
     name: Frontend type-check
     runs-on: ubuntu-latest
@@ -133,6 +217,7 @@ jobs:
       - backend-lint
       - backend-test
       - backend-build
+      - backend-smoke
       - frontend-lint
       - frontend-test
       - collector-test
