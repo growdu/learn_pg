@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -169,5 +170,49 @@ func TestGetEnv(t *testing.T) {
 	got = getEnv("TEST_MISSING", "fallback")
 	if got != "fallback" {
 		t.Errorf("got %s want fallback", got)
+	}
+}
+
+// TestLoad_WorkspaceAndProvisionFilePaths verifies the env-var overrides
+// for the workspace JSON and provision task file. Without these the
+// backend would only look at CWD-relative paths, breaking any deployment
+// that starts the server from a different directory (Docker, systemd
+// with WorkingDirectory=, dev shells that `go run` from the repo root).
+func TestLoad_WorkspaceAndProvisionFilePaths(t *testing.T) {
+	const (
+		ws = "/tmp/pgv-test-workspace.json"
+		tk = "/tmp/pgv-test-provision.json"
+	)
+	t.Setenv("WORKSPACE_FILE_PATH", ws)
+	t.Setenv("PROVISION_TASK_FILE_PATH", tk)
+
+	cfg := Load()
+
+	if cfg.WorkspaceFilePath != ws {
+		t.Errorf("WorkspaceFilePath = %q, want %q", cfg.WorkspaceFilePath, ws)
+	}
+	if cfg.ProvisionTaskFilePath != tk {
+		t.Errorf("ProvisionTaskFilePath = %q, want %q", cfg.ProvisionTaskFilePath, tk)
+	}
+	// Sanity-check that the env-var name is wired correctly: clearing
+	// both should yield the CWD-relative defaults. t.Setenv("X", "")
+	// leaves the var present-but-empty, which getEnv treats as
+	// "unset", so this is the right shape for the assertion.
+	t.Setenv("WORKSPACE_FILE_PATH", "")
+	t.Setenv("PROVISION_TASK_FILE_PATH", "")
+	cfg = Load()
+	if cfg.WorkspaceFilePath == "" {
+		t.Errorf("WorkspaceFilePath empty after env-clear; expected CWD-relative default")
+	}
+	if cfg.ProvisionTaskFilePath == "" {
+		t.Errorf("ProvisionTaskFilePath empty after env-clear; expected CWD-relative default")
+	}
+	// And the defaults should be filenames the rest of the codebase
+	// has hard-coded for years.
+	if got := filepath.Base(cfg.WorkspaceFilePath); got != "workspace_projects.json" {
+		t.Errorf("default WorkspaceFilePath base = %q, want workspace_projects.json", got)
+	}
+	if got := filepath.Base(cfg.ProvisionTaskFilePath); got != "provision_tasks.json" {
+		t.Errorf("default ProvisionTaskFilePath base = %q, want provision_tasks.json", got)
 	}
 }

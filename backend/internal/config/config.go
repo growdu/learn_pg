@@ -31,6 +31,17 @@ type Config struct {
 	// plain text and a startup warning is logged.
 	WorkspaceEncryptionKey string
 
+	// WorkspaceFilePath is where the workspace JSON is read/written.
+	// When empty we default to ./data/workspace_projects.json, but
+	// callers (tests, packaged deployments) can override via
+	// WORKSPACE_FILE_PATH.
+	WorkspaceFilePath string
+
+	// ProvisionTaskFilePath is where the provision task queue is
+	// persisted. Defaults to ./data/provision_tasks.json, overridable
+	// via PROVISION_TASK_FILE_PATH.
+	ProvisionTaskFilePath string
+
 	// TelemetryStorePath is the on-disk path for client error
 	// telemetry persistence. Empty disables persistence (events are
 	// still logged to stdout and counted in memory).
@@ -61,6 +72,8 @@ func Load() *Config {
 		EnableEBPF:             getEnvBool("ENABLE_EBPF", true),
 		LogLevel:               getEnv("LOG_LEVEL", "info"),
 		WorkspaceEncryptionKey: getEnv("WORKSPACE_ENCRYPTION_KEY", ""),
+		WorkspaceFilePath:      getEnv("WORKSPACE_FILE_PATH", "./data/workspace_projects.json"),
+		ProvisionTaskFilePath:  getEnv("PROVISION_TASK_FILE_PATH", "./data/provision_tasks.json"),
 		TelemetryStorePath:     getEnv("TELEMETRY_STORE_PATH", "./data/telemetry.json"),
 		TelemetryRetention:     getEnvDuration("TELEMETRY_RETENTION", 7*24*time.Hour),
 		TelemetryMaxEvents:     getEnvInt("TELEMETRY_MAX_EVENTS", 10000),

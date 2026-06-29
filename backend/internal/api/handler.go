@@ -53,14 +53,14 @@ func NewHandler(cfg *config.Config, hub *ws.Hub, connMgr *connection.Manager) *H
 			slog.String("env", "WORKSPACE_ENCRYPTION_KEY"),
 			slog.String("err", err.Error()))
 	}
-h := &Handler{
+	h := &Handler{
 		config:           cfg,
 		hub:              hub,
 		connMgr:          connMgr,
-		workspace:        newWorkspaceStore(defaultWorkspaceFilePath(), key),
+		workspace:        newWorkspaceStore(cfg.WorkspaceFilePath, key),
 		provisionService: provision.NewService(),
 		tasks:            make(map[string]provisionTask),
-		taskPath:         defaultProvisionTaskFilePath(),
+		taskPath:         cfg.ProvisionTaskFilePath,
 	}
 	h.provisionService.RegisterProvider(&provision.DockerProvider{})
 	h.provisionService.RegisterProvider(&provision.LocalProvider{})
@@ -72,14 +72,6 @@ h := &Handler{
 		MaxEvents: cfg.TelemetryMaxEvents,
 	})
 	return h
-}
-
-func defaultWorkspaceFilePath() string {
-	return filepath.Join("data", "workspace_projects.json")
-}
-
-func defaultProvisionTaskFilePath() string {
-	return filepath.Join("data", "provision_tasks.json")
 }
 
 // SetConnMgr sets the connection manager
