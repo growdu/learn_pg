@@ -289,30 +289,38 @@ curl http://localhost:3000/health
 ### 11.2 启动 E2E 测试环境
 
 ```bash
-# 启动 E2E 测试专用 PostgreSQL
-docker compose -f docker-compose.e2e.yml up -d
+# 在 frontend/ 下构建 dist（e2e compose 会以卷方式挂载它）
+cd frontend && pnpm install --frozen-lockfile && pnpm run build && cd ..
 
-# 验证 PG 可用
-pg_isready -h 127.0.0.1 -p 5432 -U postgres
+# 启动 e2e 专用栈：postgres + backend + frontend (nginx)
+# 复用 backend 镜像（与 prod compose 同名）；若不存在则会自动构建
+docker compose -f docker-compose.e2e.yml up -d --wait
+
+# 验证栈
+curl -s http://localhost:3010/health   # 后端 healthz
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3001/   # 前端
 ```
 
 ### 11.3 运行测试
 
 ```bash
-cd tests/e2e
-npm install
-npx playwright install chromium
+cd e2e
+pnpm install --frozen-lockfile
+pnpm test          # 跑全部 spec
+# pnpm run test:ui   # 带 UI
+# pnpm run report   # 看报告
+cd ..
 
-# 运行所有 E2E 测试
-npm test
-
-# 带 UI 运行
-npm run test:ui
-
-# 清理测试环境
-npm run test:cleanup
-docker compose -f docker-compose.e2e.yml down
+# 清理（--wait + down -v 一起用，避免留下孤儿卷和网络）
+docker compose -f docker-compose.e2e.yml down -v --remove-orphans
 ```
+
+说明：
+- e2e 后端服务挂载了宿主机 `/var/run/docker.sock` —— provision 相关
+  测试会真实 `docker pull` 和 `docker run` 一个 postgres:16 容器，
+  需保证宿主机 docker 能正常拉镜像（CI runner 默认满足）。
+- 浏览器使用系统 `chromium-browser`（`apt install chromium-browser`）。
+  Playwright 配置直接指向系统可执行文件，不需要 `npx playwright install`。
 
 ### 11.4 主链路检查项
 
@@ -328,9 +336,8 @@ docker compose -f docker-compose.e2e.yml down
 ### 11.5 常见 E2E 测试问题
 
 **Q: Playwright 找不到浏览器**
-```bash
-npx playwright install chromium
-```
+- 系统装 `chromium-browser` 即可（`apt install chromium-browser`）。
+  配置已写死 `/usr/bin/chromium-browser`，不依赖 `npx playwright install`。
 
 **Q: Docker 命令在 CI 中失败**
 - 检查 Docker-in-Docker (DinD) 配置
@@ -338,11 +345,16 @@ npx playwright install chromium
 
 **Q: 测试超时**
 - 检查 `docker-compose.e2e.yml` 中 PostgreSQL 是否正常启动
-- 增加 `globalSetup` 等待时间
+- 检查 `frontend/dist` 是否存在（缺失会导致 frontend 容器挂载空目录）
+
+**Q: provision 测试报 "failed to pull image"**
+- 宿主机 docker daemon 无法访问镜像仓库（公司代理 / DNS 问题）。
+  CI runner 默认有外网，不会触发。本地复现可在 `~/.docker/config.json`
+  里配 `proxies` 或换用其他可达的镜像仓库。
 
 **Q: 前端构建失败**
 ```bash
-cd frontend && npm install && npm run build
+cd frontend && pnpm install --frozen-lockfile && pnpm run build
 ```
 
 ## 12. 关键文件位置
