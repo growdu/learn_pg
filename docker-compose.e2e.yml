@@ -1,9 +1,16 @@
-version: '3.8'
-
 # E2E test environment.
 # Services: postgres (shared DB), backend (API), frontend (nginx)
-# Usage: docker compose -f docker-compose.e2e.yml up --build
-# Then: cd e2e && pnpm install && pnpm test
+#
+# Brings up the stack and reuses prebuilt images where possible.
+# Local usage (with rebuild):
+#   cd frontend && pnpm install --frozen-lockfile && pnpm run build
+#   docker compose -f docker-compose.e2e.yml up --build
+#   cd ../e2e && pnpm install && pnpm test
+#
+# CI usage (reuse backend image from backend-build job, mount dist):
+#   docker compose -f docker-compose.e2e.yml up --wait
+#   (frontend dist must be present in frontend/dist; the container
+#   just mounts it read-only instead of running a build stage)
 
 services:
   postgres:  # Shared DB for both backend and E2E test queries
@@ -29,9 +36,13 @@ services:
       - pgv_e2e_data:/var/lib/postgresql/data
 
   backend:
+    # Reuse prebuilt image when available; fall back to building from
+    # ./backend (with the GitHub module-download fallback baked into
+    # the Dockerfile) when the image is missing.
     build:
       context: ./backend
       dockerfile: Dockerfile
+    image: learn_pg-backend:latest
     container_name: pgv-e2e-backend
     environment:
       PG_HOST: postgres
@@ -62,14 +73,16 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.e2e
+    # Plain nginx + the prebuilt dist mounted in. This avoids needing a
+    # node build stage in the e2e container — the dist is built once
+    # on the host (or in CI) and reused.
+    image: docker.m.daocloud.io/library/nginx:alpine
     container_name: pgv-e2e-frontend
     ports:
       - "3001:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
       interval: 10s
@@ -77,6 +90,9 @@ services:
       retries: 3
     networks:
       - pgv-e2e-net
+    volumes:
+      - ./frontend/nginx.e2e.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
 
 volumes:
   pgv_e2e_data:

@@ -243,6 +243,58 @@ jobs:
       - name: Prod compose smoke
         run: bash scripts/prod-smoke.sh
 
+  # ----- End-to-end (playwright) -----
+  #
+  # Brings up docker-compose.e2e.yml (postgres + backend + frontend
+  # nginx) reusing the backend image from backend-build, then runs the
+  # Playwright spec suite. Needs chromium-browser for the system
+  # executable path the e2e playwright config points at.
+
+  e2e:
+    name: E2E (playwright)
+    runs-on: ubuntu-latest
+    needs: [backend-build]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retag backend image
+        run: docker tag learn_pg-backend:ci learn_pg-backend:latest
+      - name: Install chromium
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends chromium-browser
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - name: Build frontend dist
+        working-directory: ./frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Bring up e2e stack
+        run: docker compose -f docker-compose.e2e.yml up -d --wait
+      - name: Install e2e deps
+        working-directory: ./e2e
+        run: pnpm install --frozen-lockfile
+      - name: Run Playwright tests
+        working-directory: ./e2e
+        env:
+          E2E_BASE_URL: http://localhost:3001
+        run: pnpm test
+      - name: Upload playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7
+      - name: Tear down e2e stack
+        if: always()
+        run: docker compose -f docker-compose.e2e.yml down -v --remove-orphans
+
   # ----- Push to GHCR (only on push to main, after all tests pass) -----
 
   build-and-push:
@@ -257,6 +309,7 @@ jobs:
       - collector-test
       - compose-config
       - compose-smoke
+      - e2e
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:

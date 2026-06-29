@@ -1,4 +1,3 @@
-version: "3.9"
 
 services:
   # 被观测的 PostgreSQL 实例
