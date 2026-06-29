@@ -66,7 +66,11 @@ h := &Handler{
 	h.provisionService.RegisterProvider(&provision.LocalProvider{})
 	h.provisionService.RegisterReplicationProvider(provision.NewDockerReplicationProvider("data"))
 	h.loadProvisionTasks()
-	h.telemetry = telemetrystore.New(cfg.TelemetryStorePath)
+	h.telemetry = telemetrystore.NewWithOptions(telemetrystore.Options{
+		Path:      cfg.TelemetryStorePath,
+		Retention: cfg.TelemetryRetention,
+		MaxEvents: cfg.TelemetryMaxEvents,
+	})
 	return h
 }
 
@@ -1455,8 +1459,13 @@ func (h *Handler) ServeTelemetryErrors(w http.ResponseWriter, r *http.Request) {
 }
 
 // ServeTelemetryErrorsTop returns the most recently seen distinct
-// errors, ordered by LastSeen desc. Query param ?limit=N (default 20,
-// max 100).
+// errors, ordered by LastSeen desc.
+//
+// Query params:
+//   - limit=N  (default 20, max 100) — top-N cap on the response
+//   - since=Go-duration (e.g. "1h", "24h", "15m") — only events
+//     whose LastSeen is within this window are returned. Missing or
+//     unparseable means "all time".
 func (h *Handler) ServeTelemetryErrorsTop(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		h.writeError(w, r, http.StatusMethodNotAllowed, "GET required")
@@ -1466,8 +1475,9 @@ func (h *Handler) ServeTelemetryErrorsTop(w http.ResponseWriter, r *http.Request
 		writeJSON(w, r, http.StatusOK, map[string]any{"events": []any{}, "total": 0})
 		return
 	}
+	q := r.URL.Query()
 	limit := 20
-	if v := r.URL.Query().Get("limit"); v != "" {
+	if v := q.Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			limit = n
 		}
@@ -1475,10 +1485,18 @@ func (h *Handler) ServeTelemetryErrorsTop(w http.ResponseWriter, r *http.Request
 			limit = 100
 		}
 	}
-	events := h.telemetry.Top(limit)
+	since := time.Time{}
+	if v := q.Get("since"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			since = time.Now().UTC().Add(-d)
+		}
+	}
+	events := h.telemetry.TopSince(limit, since)
 	writeJSON(w, r, http.StatusOK, map[string]any{
-		"events": events,
-		"total":  h.telemetry.Len(),
+		"events":     events,
+		"total":      h.telemetry.Len(),
+		"in_window":  len(events),
+		"since_used": !since.IsZero(),
 	})
 }
 

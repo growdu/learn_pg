@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"time"
 )
 
 // Config holds all configuration for the application
@@ -34,6 +35,16 @@ type Config struct {
 	// telemetry persistence. Empty disables persistence (events are
 	// still logged to stdout and counted in memory).
 	TelemetryStorePath string
+
+	// TelemetryRetention is how long a distinct error is kept
+	// before being purged on the next flush. Zero falls back to the
+	// store's default (7 days) when persistence is enabled.
+	TelemetryRetention time.Duration
+
+	// TelemetryMaxEvents caps the number of distinct errors
+	// retained. Oldest-by-LastSeen are evicted. Zero falls back to
+	// the store's default (10000) when persistence is enabled.
+	TelemetryMaxEvents int
 }
 
 // Load reads configuration from environment variables
@@ -51,6 +62,8 @@ func Load() *Config {
 		LogLevel:               getEnv("LOG_LEVEL", "info"),
 		WorkspaceEncryptionKey: getEnv("WORKSPACE_ENCRYPTION_KEY", ""),
 		TelemetryStorePath:     getEnv("TELEMETRY_STORE_PATH", "./data/telemetry.json"),
+		TelemetryRetention:     getEnvDuration("TELEMETRY_RETENTION", 7*24*time.Hour),
+		TelemetryMaxEvents:     getEnvInt("TELEMETRY_MAX_EVENTS", 10000),
 	}
 }
 
@@ -78,4 +91,17 @@ func getEnvBool(key string, defaultValue bool) bool {
 		return false
 	}
 	return defaultValue
+}
+// getEnvDuration parses a duration env var. Returns the default if
+// unset or unparseable.
+func getEnvDuration(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return def
+	}
+	return d
 }

@@ -249,3 +249,168 @@ func TestHashEvent_StableIgnoresLevelAndUA(t *testing.T) {
 		t.Fatalf("hash should be 16 chars (truncated sha256), got %d", len(a))
 	}
 }
+
+// ─────────────────────────────────────────────
+// TopSince, PurgeBefore, MaxEvents cap, retention on startup
+// ─────────────────────────────────────────────
+
+func TestTopSince_FiltersByLastSeen(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	withClock(t, t0)
+	s := New("")
+	s.Record(RecordInput{Message: "old", Stack: "s", URL: "u1"})
+
+	nowFn = func() time.Time { return t0.Add(time.Hour) }
+	s.Record(RecordInput{Message: "new", Stack: "s", URL: "u2"})
+
+	top := s.TopSince(0, t0.Add(30*time.Minute))
+	if len(top) != 1 {
+		t.Fatalf("TopSince since=+30m: want 1, got %d", len(top))
+	}
+	if top[0].Message != "new" {
+		t.Errorf("expected 'new', got %q", top[0].Message)
+	}
+
+	// Zero since → no filter → both
+	all := s.TopSince(0, time.Time{})
+	if len(all) != 2 {
+		t.Errorf("TopSince zero since: want 2, got %d", len(all))
+	}
+}
+
+func TestTopSince_LimitAppliedAfterFilter(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	withClock(t, t0)
+	s := New("")
+	// 3 in window, 2 before
+	for _, off := range []time.Duration{-2 * time.Hour, -time.Hour, 0, time.Minute, 2 * time.Minute} {
+		nowFn = func() time.Time { return t0.Add(off) }
+		s.Record(RecordInput{Message: "m-" + off.String(), Stack: "s", URL: "u"})
+	}
+	out := s.TopSince(2, t0)
+	if len(out) != 2 {
+		t.Fatalf("TopSince(2, since=t0): want 2, got %d", len(out))
+	}
+	// Most-recent first
+	if out[0].Message != "m-2m0s" {
+		t.Errorf("first should be most recent, got %q", out[0].Message)
+	}
+}
+
+func TestPurgeBefore_RemovesOld(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	withClock(t, t0)
+	s := New("")
+	s.Record(RecordInput{Message: "old", Stack: "s", URL: "u"})
+	nowFn = func() time.Time { return t0.Add(time.Hour) }
+	s.Record(RecordInput{Message: "new", Stack: "s", URL: "u"})
+
+	removed := s.PurgeBefore(t0.Add(30 * time.Minute))
+	if removed != 1 {
+		t.Fatalf("PurgeBefore: want 1 removed, got %d", removed)
+	}
+	if s.Len() != 1 {
+		t.Fatalf("after purge: want 1 event, got %d", s.Len())
+	}
+	top := s.Top(0)
+	if top[0].Message != "new" {
+		t.Errorf("expected 'new' to survive, got %q", top[0].Message)
+	}
+}
+
+func TestMaxEvents_EvictsOldest(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	withClock(t, t0)
+	s := NewWithOptions(Options{MaxEvents: 3})
+
+	// 5 distinct events over time
+	for i := 0; i < 5; i++ {
+		nowFn = func() time.Time { return t0.Add(time.Duration(i) * time.Minute) }
+		s.Record(RecordInput{
+			Message: string(rune('a' + i)),
+			Stack:   "s",
+			URL:     string(rune('A' + i)), // distinct URL → distinct hash
+		})
+	}
+	if s.Len() != 3 {
+		t.Fatalf("after cap: want 3 events, got %d", s.Len())
+	}
+	top := s.Top(0)
+	// Two oldest (a, b) should be evicted; c, d, e survive.
+	messages := []string{top[0].Message, top[1].Message, top[2].Message}
+	want := []string{"e", "d", "c"}
+	for i := range want {
+		if messages[i] != want[i] {
+			t.Errorf("order[%d]: want %q, got %q", i, want[i], messages[i])
+		}
+	}
+}
+
+func TestMaxEvents_NewEventSurvivesEvenAtCapOne(t *testing.T) {
+	withClock(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	s := NewWithOptions(Options{MaxEvents: 1})
+	s.Record(RecordInput{Message: "first", Stack: "s", URL: "u"})
+	nowFn = func() time.Time { return time.Date(2026, 1, 1, 0, 1, 0, 0, time.UTC) }
+	s.Record(RecordInput{Message: "second", Stack: "s", URL: "u2"}) // distinct
+	if s.Len() != 1 {
+		t.Fatalf("cap=1: want 1 event, got %d", s.Len())
+	}
+	top := s.Top(0)
+	if top[0].Message != "second" {
+		t.Errorf("newest should survive, got %q", top[0].Message)
+	}
+}
+
+func TestRetention_AppliesOnStartup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "t.json")
+	// Pre-seed with one old + one recent event
+	nowFn = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	s1 := NewWithOptions(Options{Path: path, Retention: 24 * time.Hour})
+	s1.Record(RecordInput{Message: "old", Stack: "s", URL: "u1"})
+	// Move clock forward 48h and record another
+	nowFn = func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) }
+	s1.Record(RecordInput{Message: "recent", Stack: "s", URL: "u2"})
+	s1.Close()
+
+	// Reopen with the same retention — "old" should be purged at load
+	nowFn = func() time.Time { return time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC) }
+	s2 := NewWithOptions(Options{Path: path, Retention: 24 * time.Hour})
+	defer s2.Close()
+	if s2.Len() != 1 {
+		t.Fatalf("after startup purge: want 1 event, got %d", s2.Len())
+	}
+	top := s2.Top(0)
+	if top[0].Message != "recent" {
+		t.Errorf("expected 'recent' to survive startup purge, got %q", top[0].Message)
+	}
+}
+
+func TestNew_NoPathStillRespectsOptions(t *testing.T) {
+	// Memory-only store can also have a cap
+	withClock(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	s := NewWithOptions(Options{MaxEvents: 2})
+	for i := 0; i < 5; i++ {
+		nowFn = func() time.Time { return time.Date(2026, 1, 1, 0, 0, i, 0, time.UTC) }
+		s.Record(RecordInput{Message: string(rune('a' + i)), Stack: "s", URL: string(rune('u' + i))})
+	}
+	if s.Len() != 2 {
+		t.Fatalf("memory cap=2: want 2, got %d", s.Len())
+	}
+}
+
+func TestNew_PathDefaultRetentionIsSevenDays(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "t.json")
+	nowFn = func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+	s := New(path) // no explicit retention → default 7d
+	s.Record(RecordInput{Message: "x", Stack: "s", URL: "u"})
+	// 8 days later, still inside retention because LastSeen is just set
+	nowFn = func() time.Time { return time.Date(2026, 1, 9, 0, 0, 0, 0, time.UTC) }
+	s2 := New(path)
+	defer s2.Close()
+	// startup purge should drop the 8-day-old event
+	if s2.Len() != 0 {
+		t.Errorf("default 7d retention should have purged the 8-day-old event, got len=%d", s2.Len())
+	}
+}

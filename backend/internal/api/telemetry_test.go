@@ -354,3 +354,55 @@ func TestServeTelemetryErrorsTop_RejectsWrongMethod(t *testing.T) {
 		t.Errorf("POST: want 405, got %d", rr.Code)
 	}
 }
+
+
+// ──────────────────────────────────────────
+// Time-windowed top query
+// ──────────────────────────────────────────
+
+func TestServeTelemetryErrorsTop_SinceQuery(t *testing.T) {
+	h := newTelemetryHandler()
+	// Three events with current time.
+	for _, msg := range []string{"alpha", "beta", "gamma"} {
+		body := map[string]any{
+			"reports": []map[string]any{{
+				"eventId": "e", "message": msg, "stack": "s", "url": "u",
+			}},
+		}
+		doTelemetry(t, h, http.MethodPost, "/api/telemetry/errors", body)
+	}
+
+	// since=1h — all three recorded within the test, so all in window.
+	rr := doTelemetry(t, h, http.MethodGet, "/api/telemetry/errors/top?since=1h", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d body=%s", rr.Code, rr.Body)
+	}
+	var resp struct {
+		Events    []json.RawMessage `json:"events"`
+		InWindow  int               `json:"in_window"`
+		SinceUsed bool              `json:"since_used"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v body=%s", err, rr.Body)
+	}
+	if !resp.SinceUsed {
+		t.Errorf("since_used should be true for valid since param")
+	}
+	if resp.InWindow != 3 {
+		t.Errorf("in_window: want 3, got %d", resp.InWindow)
+	}
+
+	// Invalid since — should be tolerated and treated as "no filter".
+	rr = doTelemetry(t, h, http.MethodGet, "/api/telemetry/errors/top?since=garbage", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("invalid since: status %d body=%s", rr.Code, rr.Body)
+	}
+	resp.SinceUsed = false
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.SinceUsed {
+		t.Errorf("since_used should be false when since is unparseable")
+	}
+	if resp.InWindow != 3 {
+		t.Errorf("invalid since should still return all events, got in_window=%d", resp.InWindow)
+	}
+}

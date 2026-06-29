@@ -40,27 +40,75 @@ type Event struct {
 	LastTimestamp time.Time `json:"lastTimestamp"`
 }
 
+// Options configures a Store. Zero values mean "use defaults".
+type Options struct {
+	// Path is the on-disk JSON file. Empty disables persistence
+	// (in-memory only, no flush goroutine).
+	Path string
+
+	// Retention is the maximum age of an event by LastSeen. Events
+	// older than this are purged during periodic flushes. Zero
+	// disables purging. Default when persistence is enabled: 7 days.
+	Retention time.Duration
+
+	// MaxEvents caps the number of distinct events. When exceeded,
+	// the oldest (by LastSeen) event is evicted on each new Record.
+	// Zero disables the cap. Default when persistence is enabled:
+	// 10000.
+	MaxEvents int
+
+	// FlushInterval controls how often the store is written to disk.
+	// Zero means 30 seconds.
+	FlushInterval time.Duration
+}
+
 // Store is safe for concurrent use.
 type Store struct {
 	mu     sync.RWMutex
 	path   string
 	events map[string]*Event // keyed by Hash
 
-	flushInterval time.Duration
-	stopCh        chan struct{}
-	wg            sync.WaitGroup
+	retention      time.Duration
+	maxEvents      int
+	flushInterval  time.Duration
+	stopCh         chan struct{}
+	wg             sync.WaitGroup
 }
 
-// New creates a store backed by path. If path is empty the store runs
-// in memory only (no persistence, no flush goroutine).
+// New is shorthand for NewWithOptions(Options{Path: path}).
 func New(path string) *Store {
+	return NewWithOptions(Options{Path: path})
+}
+
+// NewWithOptions creates a store with full configuration. When Path
+// is empty the store runs in memory only and the flush goroutine is
+// not started.
+func NewWithOptions(opts Options) *Store {
 	s := &Store{
-		path:   path,
+		path:   opts.Path,
 		events: make(map[string]*Event),
 	}
-	if path != "" {
-		_ = s.load()
+	if opts.FlushInterval > 0 {
+		s.flushInterval = opts.FlushInterval
+	} else {
 		s.flushInterval = 30 * time.Second
+	}
+	// Defaults apply to *every* store, not just persisted ones, so
+	// memory-only callers can still bound their footprint.
+	s.retention = opts.Retention
+	s.maxEvents = opts.MaxEvents
+	if opts.Path != "" {
+		if s.retention == 0 {
+			s.retention = 7 * 24 * time.Hour
+		}
+		if s.maxEvents == 0 {
+			s.maxEvents = 10000
+		}
+		_ = s.load()
+		// Drop anything already past retention at startup.
+		s.purgeBeforeLocked(nowFn().Add(-s.retention))
+		s.enforceCapLocked()
+
 		s.stopCh = make(chan struct{})
 		s.wg.Add(1)
 		go s.flusher(s.stopCh)
@@ -128,17 +176,29 @@ func (s *Store) Record(in RecordInput) string {
 		LastEventID:   in.EventID,
 		LastTimestamp: in.Timestamp,
 	}
+	// Enforce the cap *after* insertion so the new event survives
+	// even when MaxEvents == 1.
+	s.enforceCapLocked()
 	return h
 }
 
 // Top returns up to limit events ordered by LastSeen descending. If
 // limit <= 0 all events are returned.
 func (s *Store) Top(limit int) []*Event {
+	return s.TopSince(limit, time.Time{})
+}
+
+// TopSince returns up to limit events with LastSeen >= since,
+// ordered by LastSeen descending. A zero since means no filter.
+// If limit <= 0 all matching events are returned.
+func (s *Store) TopSince(limit int, since time.Time) []*Event {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make([]*Event, 0, len(s.events))
 	for _, e := range s.events {
-		// copy so callers cannot mutate store state via the pointer
+		if !since.IsZero() && e.LastSeen.Before(since) {
+			continue
+		}
 		c := *e
 		out = append(out, &c)
 	}
@@ -149,6 +209,48 @@ func (s *Store) Top(limit int) []*Event {
 		out = out[:limit]
 	}
 	return out
+}
+
+// PurgeBefore removes every event whose LastSeen is strictly before
+// cutoff. Returns the number of events removed. Intended to be
+// called periodically from the flush goroutine.
+func (s *Store) PurgeBefore(cutoff time.Time) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.purgeBeforeLocked(cutoff)
+}
+
+// purgeBeforeLocked is the lock-free caller version of PurgeBefore.
+// It expects the caller to hold s.mu (write lock).
+func (s *Store) purgeBeforeLocked(cutoff time.Time) int {
+	removed := 0
+	for h, e := range s.events {
+		if e.LastSeen.Before(cutoff) {
+			delete(s.events, h)
+			removed++
+		}
+	}
+	return removed
+}
+
+// enforceCapLocked evicts oldest-by-LastSeen events until the map
+// size is at or below s.maxEvents. No-op when maxEvents <= 0.
+func (s *Store) enforceCapLocked() {
+	if s.maxEvents <= 0 || len(s.events) <= s.maxEvents {
+		return
+	}
+	// Sort all events by LastSeen ascending and drop the head.
+	all := make([]*Event, 0, len(s.events))
+	for _, e := range s.events {
+		all = append(all, e)
+	}
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].LastSeen.Before(all[j].LastSeen)
+	})
+	excess := len(all) - s.maxEvents
+	for i := 0; i < excess; i++ {
+		delete(s.events, all[i].Hash)
+	}
 }
 
 // Len returns the number of distinct events currently stored.
@@ -219,11 +321,22 @@ func (s *Store) flusher(stop <-chan struct{}) {
 		case <-stop:
 			return
 		case <-t.C:
+			s.maintain()
 			if err := s.flush(); err != nil {
 				fmt.Fprintf(os.Stderr, "telemetrystore: flush error: %v\n", err)
 			}
 		}
 	}
+}
+
+// maintain applies purge + cap, no-op if neither is configured.
+func (s *Store) maintain() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.retention > 0 {
+		s.purgeBeforeLocked(nowFn().Add(-s.retention))
+	}
+	s.enforceCapLocked()
 }
 
 // ────────────────────────── helpers ──────────────────────────
