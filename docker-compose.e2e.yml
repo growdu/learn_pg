@@ -23,7 +23,12 @@ services:
       POSTGRES_HOST_AUTH_METHOD: trust
       PGDATA: /var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      # Host port is overridable for environments that already have
+      # something on 5432. Tests don't connect to PG directly — they
+      # hit the backend on 3010 (also overridable) which talks to PG
+      # over the docker network. Default 5432 matches the original
+      # CI contract; override locally with PG_E2E_PG_PORT=5434 etc.
+      - "${PG_E2E_PG_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -54,7 +59,7 @@ services:
       COLLECTOR_WS_URL: ws://collector:8090
       PG_DATA_DIR: /var/lib/postgresql/data
     ports:
-      - "3010:3000"
+      - "${PG_E2E_API_PORT:-3010}:3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,6 +73,13 @@ services:
       - pgv-e2e-net
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # The host's docker socket is root:docker with mode 0660. The image
+    # ships a non-root `app` user, so we add it to the docker group
+    # (gid 971 on most hosts; override via PG_DOCKER_GID env if it
+    # differs in your environment) so provision/discovery can talk
+    # to the daemon. CI runners usually have this set up by default.
+    group_add:
+      - "${PG_DOCKER_GID:-971}"
     volumes:
       - pgv_e2e_data:/var/lib/postgresql/data:ro
       - /var/run/docker.sock:/var/run/docker.sock
@@ -79,7 +91,8 @@ services:
     image: docker.m.daocloud.io/library/nginx:alpine
     container_name: pgv-e2e-frontend
     ports:
-      - "3001:80"
+      # 3011 on the host (avoid colliding with another dev server on 3001).
+      - "${PG_E2E_FE_PORT:-3001}:80"
     depends_on:
       backend:
         condition: service_healthy

@@ -301,6 +301,24 @@ curl -s http://localhost:3010/health   # 后端 healthz
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3001/   # 前端
 ```
 
+**端口冲突怎么办？** e2e compose 的三个 host 端口都可被环境变量
+覆盖，默认值（5432 / 3010 / 3001）保留 CI 既有行为。本地有进程
+占用这些端口时：
+
+```bash
+PG_E2E_PG_PORT=5434 \
+PG_E2E_API_PORT=3010 \
+PG_E2E_FE_PORT=3011 \
+docker compose -f docker-compose.e2e.yml up -d --wait
+
+# 跑测试时把同一个 PG_E2E_FE_PORT 传下去，playwright 和
+# 各个 spec 文件都从 E2E_BASE_URL 拿 base URL
+cd e2e
+E2E_BASE_URL=http://localhost:${PG_E2E_FE_PORT:-3001} \
+PG_E2E_FE_PORT=${PG_E2E_FE_PORT:-3001} \
+  pnpm test
+```
+
 ### 11.3 运行测试
 
 ```bash
@@ -319,6 +337,10 @@ docker compose -f docker-compose.e2e.yml down -v --remove-orphans
 - e2e 后端服务挂载了宿主机 `/var/run/docker.sock` —— provision 相关
   测试会真实 `docker pull` 和 `docker run` 一个 postgres:16 容器，
   需保证宿主机 docker 能正常拉镜像（CI runner 默认满足）。
+- 后端镜像用非 root `app` 用户运行；为了能访问 docker socket
+  （默认属 `root:docker` 0660），compose 用 `group_add` 把
+  `app` 加进 host 的 docker gid，默认 971。如果你的 host docker gid
+  不是 971，运行时覆盖 `PG_DOCKER_GID=<gid>` 即可。
 - 浏览器使用系统 `chromium-browser`（`apt install chromium-browser`）。
   Playwright 配置直接指向系统可执行文件，不需要 `npx playwright install`。
 
@@ -351,6 +373,14 @@ docker compose -f docker-compose.e2e.yml down -v --remove-orphans
 - 宿主机 docker daemon 无法访问镜像仓库（公司代理 / DNS 问题）。
   CI runner 默认有外网，不会触发。本地复现可在 `~/.docker/config.json`
   里配 `proxies` 或换用其他可达的镜像仓库。
+- 另一种常见原因是后端容器拿不到 docker.sock 的写权限。检查：
+  ```bash
+  docker exec pgv-e2e-backend id    # 看 groups 是否有 docker
+  docker exec pgv-e2e-backend docker pull docker.m.daocloud.io/library/postgres:16
+  ```
+  多数情况下是 `app` 用户没在 host 的 docker gid 里。e2e compose
+  通过 `group_add` 默认加 971；如果你的 host 上 gid 不是 971，
+  用 `PG_DOCKER_GID=<实际gid>` 启动 compose 即可。
 
 **Q: 前端构建失败**
 ```bash

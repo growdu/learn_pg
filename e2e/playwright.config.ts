@@ -28,7 +28,7 @@ export default defineConfig({
   ],
 
   use: {
-    baseURL: 'http://localhost:3001',
+    baseURL: `http://localhost:${process.env.PG_E2E_FE_PORT ?? '3001'}`,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
@@ -51,7 +51,7 @@ export default defineConfig({
 
   webServer: {
     command: 'docker compose -f ../docker-compose.e2e.yml up --wait',
-    url: 'http://localhost:3001',
+    url: `http://localhost:${process.env.PG_E2E_FE_PORT ?? '3001'}`,
     reuseExistingServer: true,
     timeout: 120_000,
     stdout: 'pipe',
