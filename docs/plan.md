@@ -251,6 +251,56 @@
 - 2026-05-12：M1 完成 — workspace_store 增量读写、workspace_crud 资源式 CRUD、API 密码脱敏返回、前端移除 localStorage workspace/profile 持久化。
 - 2026-05-14：M8 完成 — 删除 provision fallback、TemplateDialog 增加 preview/create 模式选择、Playwright E2E 测试骨架、docker-compose.e2e.yml、后端 API 单元测试、ops.md 联调检查清单。
 - 2026-06-24：修复 host_crud.go 闭包返回值编译错误、clog/wal 测试数据错误（WAL magic 未写入、TransactionsPerSegment 大小写、HEAP3/OP_16 期望值）。
+- 2026-06-29：M9 完成 — 客户端遥测（error reporter + Web Vitals + fetch/WS breadcrumbs）、后端持久化去重 + 时间窗查询、CI 切分（backend-smoke / compose-smoke / e2e）、前端切到 pnpm + 真 lockfile、WS 与 HTTP 统一走 CORS allowlist、ops.md E2E 章节刷新。
+
+## M9：可观测性、回归基线与发布硬化（P1，1 周）
+状态：已完成
+
+> 这一里程碑在 M0–M8 全部跑通之后补做，没有引入新业务能力，
+> 目的是把"已完工的能力"补成可观测、可回归、可发布的形态。
+> 原计划未单独列项，事后补登。
+
+### 任务分解
+1. 客户端错误与性能数据接入：
+   - `errorReporter` + `Web Vitals` 上报到 `/api/telemetry/{errors,vitals}`。
+   - fetch / WebSocket 包装器加 request-id、retry、timeout、breadcrumb。
+   - 前端加 `ErrorBoundary` 作为根 fallback。
+2. 后端遥测存储：
+   - 文件落地 + sha256 去重（`telemetrystore`）。
+   - 时间窗查询接口（`since`、`limit`），用于 admin/dashboard 调阅。
+3. CI 流水线分层：
+   - `tests`（go test / vitest / vet / race / compose-validate）独立于 push。
+   - `backend-smoke` job：起后端 + `/health` `/readyz` 探活。
+   - `compose-smoke` job：dev + prod compose 端到端起停。
+   - `e2e` job：Playwright 套件接入。
+4. 前端工程化：
+   - 切到 pnpm，提交真 `pnpm-lock.yaml`，Dockerfile 走 `--frozen-lockfile`。
+   - 去掉无用的 lint 脚本，引入 `typecheck`。
+5. 安全收口：
+   - CORS 走 `CORS_ALLOWED_ORIGINS` allowlist（带凭据感知）。
+   - WebSocket 升级器复用同一 allowlist。
+   - 敏感操作走 audit log channel。
+
+### 验收标准
+- 浏览器发生未捕获错误时，后端 `/api/telemetry/errors` 收到一条事件，且
+  同一错误堆叠只入一次（去重按 sha256(msg|stack|url)）。
+- `pnpm install --frozen-lockfile` 在干净环境能复现前端依赖。
+- `actions` 上 4 个 job（tests / backend-smoke / compose-smoke / e2e）独立可跑。
+- WS 与 HTTP 入口在生产配置下拒绝非同源 upgrade。
+
+### 交付物
+- `frontend/src/lib/{errorReporter,webVitals,api,fetchWithRetry}.ts`
+- `frontend/src/components/common/ErrorBoundary.tsx`
+- `backend/internal/telemetrystore/*`
+- `backend/internal/reporter/*`（接收端）
+- `backend/internal/auditlog/*`
+- `.github/workflows/ci.yml`（分层 job）
+- `frontend/Dockerfile`（pnpm + frozen lockfile）
+- `docker-compose.{dev,prod,e2e}.yml`（smoke 验证）
+- `docs/ops.md`（E2E 章节刷新）
+- `scripts/{dev-smoke,prod-smoke}.sh`
+
+---
 
 ## 9. 当前进度摘要
 
@@ -263,3 +313,4 @@
 - M6：100%（已完成）
 - M7：100%（已完成）
 - M8：100%（已完成）
+- M9：100%（已完成，2026-06-29 收口）
