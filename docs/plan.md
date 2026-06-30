@@ -289,14 +289,21 @@
 - WS 与 HTTP 入口在生产配置下拒绝非同源 upgrade。
 
 ### 交付物
-- `frontend/src/lib/{errorReporter,webVitals,api,fetchWithRetry}.ts`
+- `frontend/src/lib/{errorReporter,webVitals,api}.ts` — 前者两个是遥测
+  原语，后者是 fetch 包装器（内置 retry / timeout / request-id /
+  breadcrumb / AbortController 透传，因此 M9 最初列的
+  `fetchWithRetry.ts` 已被合进 `api.ts` 不再单列）。
 - `frontend/src/components/common/ErrorBoundary.tsx`
-- `backend/internal/telemetrystore/*`
-- `backend/internal/reporter/*`（接收端）
-- `backend/internal/auditlog/*`
-- `.github/workflows/ci.yml`（分层 job）
+- `backend/internal/telemetrystore/*` — 文件落地 + sha256 去重
+- `backend/internal/reporter/*` — `/api/telemetry/{errors,vitals}` 接收端
+- `backend/internal/auditlog/*` — 敏感操作审计通道
+- `.github/workflows/ci.yml` — 9 个独立 job：
+  `backend-lint` / `backend-test` / `backend-build` / `backend-smoke` /
+  `frontend-lint` / `frontend-test` / `collector-test` /
+  `compose-config` / `compose-smoke` / `e2e`
 - `frontend/Dockerfile`（pnpm + frozen lockfile）
-- `docker-compose.{dev,prod,e2e}.yml`（smoke 验证）
+- `docker-compose.{dev,prod,e2e}.yml` + e2e 用 `PG_E2E_*` 环境变量
+  覆盖 host 端口、`PG_DOCKER_GID` 覆盖 docker socket 权限
 - `docs/ops.md`（E2E 章节刷新）
 - `scripts/{dev-smoke,prod-smoke}.sh`
 
@@ -314,3 +321,17 @@
 - M7：100%（已完成）
 - M8：100%（已完成）
 - M9：100%（已完成，2026-06-29 收口）
+
+收口之后做的补强（不属于任何 M，归类到 M9 后续）：
+- 单测覆盖扩面（`go test -race ./...`）：
+  - `internal/connection` 0% → 67.1%
+  - `internal/pg` 0% → 24.3%（外部依赖路径受限于真实 DB）
+  - `internal/provision` 0% → 25.8%（同上，受限于真实 docker/PG）
+  - `internal/ws` 29.9% → 50.4%（Hub.Run 交互、广播、慢客户端、
+    origin 拒绝全部覆盖）
+  - `pkg/clog` 49.5% → 88.2%（resolveStatusDir、ReadPage 偏移、
+    ReadRange 缺段跳过、Subtrans 读写全部覆盖）
+- E2E 跑通：30/30 playwright 用例在 `docker-compose.e2e.yml` 下 16.5s
+  通过，本地遇到 5432/3001 端口冲突、docker.sock 0660 权限不足，
+  全部用 `PG_E2E_PG_PORT` / `PG_E2E_API_PORT` / `PG_E2E_FE_PORT` /
+  `PG_DOCKER_GID` 环境变量覆盖解决（默认值保留 CI 既有行为）。
