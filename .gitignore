@@ -46,7 +46,12 @@ coverage/
 # Misc
 *.log.obsidian/
 .obsidian/
+# Backend runtime data files (created by the running server). Don't
+# track — they're regenerated on every boot. Keep the rule narrowly
+# scoped to backend/data/ so we don't accidentally ignore a future
+# top-level data/ we mean to commit.
 backend/data/workspace_projects.json
+backend/data/telemetry.json
 backend/pgv-server
 
 # Backend runtime data dir (created when the backend is started from
